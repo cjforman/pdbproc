@@ -1,20 +1,16 @@
 #!/usr/bin/env python
-import sys,os
-from numpy import *
-from scipy import *
+import sys, os
+import numpy as np
 from scipy.optimize import fmin_l_bfgs_b
-from string import *
-from math import *
+import string as strg
+import math as mth
 from itertools import chain
-from mpl_toolkits.mplot3d import Axes3D,proj3d
+from mpl_toolkits.mplot3d import proj3d
 import matplotlib.pyplot as plt
 from matplotlib.patches import FancyArrowPatch
-from copy import *
-
-#from pele import *
-
-sys.path.append('/usr/local/lib64/python2.4/site-packages')
-sys.path.append('~/lib/data')
+import copy as cp
+import freezeAtoms
+from astropy.wcs.docstrings import name
 
 class Arrow3D(FancyArrowPatch):
     def __init__(self, xs, ys, zs, *args, **kwargs):
@@ -27,28 +23,98 @@ class Arrow3D(FancyArrowPatch):
         self.set_positions((xs[0],ys[0]),(xs[1],ys[1]))
         FancyArrowPatch.draw(self, renderer)
 
+# pinched these next few functions from Utilities. COuoldn't get all the different versions of python to talk to Utilities. Whatever.  
+
+def generateTNBVecXYZ(genTNB, beta, alpha):
+    # This function returns a unit vector pointing in the direction 
+    # in the TNB frame defined by alpha and beta.
+    # The vector is returned in the XYZ coords of the frame in 
+    # which the TNB vectors are defined. 
+     
+    # Alpha is the azimuthal angle about the T vector (first in TNB list). 
+    # Alpha = 0 is in the direction of the B vector (third in list)
+    # Beta is the elevation angle which is zero in the B-N plane.
+    # When the TNB frame is defined by the last three monomers in a polymer chain, 
+    # Then alpha is the dihedral angle defined by the three monomers and the newly picked vector.
+    # Beta is the angle between the new "bond" and the penultimate "bond".
+    posTNB = bondAngleDihedral2TNB(np.array([1.0, beta, alpha]))
+    return TNB2XYZ(genTNB, posTNB)
+
+def bondAngleDihedral2TNB(pos): # given r, beta, alpha in terms of bond angle (zero to pi) and dihedral(-pi to pi)
+    # return a cartesian vector in the TNB convention.  X->B, y-> N, and Z->T.  See book 6 page 79. 
+    cartVect = sphericalPolar2XYZ([pos[0], pos[1] - np.pi/2, pos[2]])
+    return np.array([cartVect[2], cartVect[1], cartVect[0]]) 
+
+def TNB2XYZ(TNBframe, posTNB):
+    # given a TNB frame defined in XYZ coords, and a TNB vector, posTNB, defined in the TNB frame, 
+    # return the XYZ coords of posTNB 
+    return np.inner(np.transpose(TNBframe), posTNB)
+
+def sphericalPolar2XYZ(pos):
+    # takes [r, theta, phi] numpy array. Computes the x,y,z coords on unit sphere and 
+    # scales it to radius r thus returning x, y, z position of spherical polar input
+    unitSpherePos = polarToUnitSphereXYZ(pos[1], pos[2]) 
+    return pos[0] * unitSpherePos   
+
+def polarToUnitSphereXYZ(theta, phi):
+    # take theta and phi and computes the x, y and z position of the point on unit sphere.
+    # this (and inverse XYZ2SphericalPolar) is the only place where this transformation is defined.
+    # theta is from -pi/2 (south pole) to pi/2 (north pole), measured from xy plane.
+    # phi is from -pi to pi. zero at +ve x axis.  
+    return np.array([np.cos(phi) * np.cos(theta), np.sin(phi) * np.cos(theta), np.sin(theta)]) 
+
+def constructTNBFrame(p1, p2, p3):
+    # given three arbitrary points defined in the lab XYZ frame, this function constructs 
+    # three orthogonal vectors (T, N and B). T points from the second seed point in the list to the third seed point.
+    # The N axis is normal to the plane formed by the three points, and is therefore orthogonal to T.
+    # B is the cross product of T and N. The three unit vectors in these directions are returned as a numpy array of numpy arrays (a matrix)
+    # returns None if p1, p2 and p3 are colinear
+    
+    # assume failure
+    outVecs=None
+    
+    T = p3 - p2  # equivalent of b2 in bond angle and dihedral functions
+    tHat = T/np.linalg.norm(T)
+
+    U = p2 - p1 # equivalent of b1 in bond angle and dihedral functions
+    uHat = U/np.linalg.norm(U)
+    
+    n = np.cross(uHat, tHat)  # equiv of n1 = b1 x b2 in dihedrals
+    nMag =  np.linalg.norm(n)
+    
+    if ( abs(nMag - 0.0) > 1e-10):  # check for colinearity (cross product of T and U is zero)
+        # now we're not colinear can divide by norm(n)
+        nHat= n/nMag
+        
+        b = np.cross(nHat, tHat)  # equiv of m1 = n1Hat x b2Hat in dihedral reconstruction 
+        bHat = b/np.linalg.norm(b) # just in case
+        outVecs = np.array([tHat, nHat, bHat])
+    
+    return outVecs
+
+
 def groupAtomsXYZ(infile, outfile):
-    #read in the atoms from the pdb
+    # read in the atoms from the pdb
     atoms=readAllAtoms(infile)
     
     # re label atoms as C, H, N, O, P, S to reduce number of objects in blender
 
     # convert the atom type to an atom colour that reflects the functional gorup of the residue.
     for atom in atoms:
-	if atom[3]=='LIG':
+        if atom[3]=='LIG':
             atom[1] ='W'
         elif 'N' in atom[1]:
-            atom[1] ='C'
+            atom[1] ='N'
         elif 'C' in atom[1]:
             atom[1] ='C' 
         elif 'O' in atom[1]:
-            atom[1] ='C' 
+            atom[1] ='O' 
         elif 'H' in atom[1]:
-            atom[1] ='C' 
+            atom[1] ='H' 
         elif 'S' in atom[1]:
-            atom[1] ='C' 
+            atom[1] ='S' 
         elif 'P' in atom[1]:
-            atom[1] ='C' 
+            atom[1] ='P' 
         else:
             print 'Unrecognised atom', atom[1], ' line:', atom[0]
             atom[1] ='Pb' # dark grey
@@ -60,7 +126,7 @@ def groupAtomsXYZ(infile, outfile):
 
 
 def makeXYZForBlender(infile, outfile):
-    #read in the atoms from the pdb
+    # read in the atoms from the pdb
     atoms=readAllAtoms(infile)
     
     # filter out the CA atoms
@@ -97,90 +163,91 @@ def writeXYZ(atoms, outfile):
 
 def parseXYZFile(xyz):
     ''' reads an xyz file and returns an array of frames. Each frame containes the list of atoms names and a list of corresponding coords as numpy coords.'''
-    #read in the xyz file
-    xyzData=readTextFile(xyz)
+    # read in the xyz file
+    xyzData = readTextFile(xyz)
 
-    #initialise frames output
+    # initialise frames output
     frames=[]
 
     curline=0
-    while curline<len(xyzData):
-	#read the frame length from the current line in xyzData
-	framelen=int(xyzData[curline])
+    while curline < len(xyzData):
+        # read the frame length from the current line in xyzData (starts off at 0)
+        framelen = int(xyzData[curline])
 
         #get the data for the current frame
-        xyzList=xyzData[curline+2:curline+2+framelen]
+        xyzList = xyzData[curline + 2 : curline + 2 + framelen]
 
         #increment the cur line index
-        curline+=2+framelen
+        curline += 2 + framelen
 
         #create the output lists for the atom names and atom coords
-        atomNames=[]
-        atomCoords=[]
-	for atomData in xyzList:
-            atom=atomData.split()
-	    atomNames.append(atom[0])
-            atomCoords.append(array([float(atom[1]),float(atom[2]),float(atom[3])]))
+        atomNames = []
+        atomCoords = []
+        for atomData in xyzList:
+            atom = atomData.split()
+            atomNames.append(atom[0])
+            atomCoords.append(np.array([float(atom[1]),float(atom[2]),float(atom[3])]))
     
-	frames.append([atomNames,atomCoords])
+    
+        frames.append([atomNames, atomCoords])
 
     return frames
 
-def replacePdbXYZ(infile,xyz,outputfile):
-    '''function reads in an xyz file and replaces the coords in the pdb with the coords in the xyz file.
-       Generates a PDB for each structure in the xyz file.'''
+def replacePdbXYZ(infile, xyz, outputfile):
+    ''' Function reads in an xyz file and replaces the coords in the pdb with the coords in the xyz file.
+        Generates a PDB for each structure in the xyz file.'''
     frameNum=0
     for frame in parseXYZFile(xyz):
-	replacePdbAtoms(infile,frame[1],outputfile+'.'+str(frameNum)+'.pdb')
-        frameNum+=1
+        replacePdbAtoms(infile, frame[1], outputfile + '.' + str(frameNum) + '.pdb')
+        frameNum += 1
     return
 
 
-def replacePdbAtoms(infile,newCoords,outfile):
+def replacePdbAtoms(infile, newCoords, outfile):
     ''' Creates a verbatim copy of the pdb infile but with the coords replaced by the list of coords in new Atoms.
         Assumes the coords are in the same order as the pdb file atom lines and are in a list of xyz triplets.'''
 
-    #read in the atoms from the pdb
+    # read in the atoms from the pdb
     atoms=readAllAtoms(infile)
 
-    #check the lists are compatible
+    # check the lists are compatible
     if len(atoms)!=len(newCoords):
-	print "atom lists incompatible sizes" 
-	sys.exit(0)
+        print "atom lists incompatible sizes" 
+        sys.exit(0)
 
-    #get the raw pdb file
+    # get the raw pdb file
     pdb=readTextFile(infile)
 
-    #seed the output array
+    # seed the output array
     outputlines=[]
     curCoord=0
 
-    #loop through the raw input
+    # loop through the raw input
     for line in pdb:
-	#copy the line for output
-        newLine=copy(line)
+        # copy the line for output
+        newLine = cp.copy(line)
 
-	#check to see if the current line in the pdb is an atom or a hetatom
+        # check to see if the current line in the pdb is an atom or a hetatom
         if line[0:4]=="ATOM" or line[0:6]=="HETATM":
-	    #if it is then parse the input atom line
+            # if it is then parse the input atom line
             try:
                 atom = parsePdbLine(newLine)
             except:
                 print "line: " + line + " not understood"
                 exit(0)
-            #replace the coords
-            atom[7]=newCoords[curCoord][0]
-            atom[8]=newCoords[curCoord][1]
-            atom[9]=newCoords[curCoord][2]
+            # replace the coords
+            atom[7] = newCoords[curCoord][0]
+            atom[8] = newCoords[curCoord][1]
+            atom[9] = newCoords[curCoord][2]
  
-	    curCoord+=1
+            curCoord += 1
         
-	    #generate the new line
-            newLine=pdbLineFromAtom(atom)
+            # generate the new line
+            newLine = pdbLineFromAtom(atom)
        
-	outputlines.append(copy(newLine))
+        outputlines.append(cp.copy(newLine))
 
-    writeTextFile(outputlines,outfile)
+    writeTextFile(outputlines, outfile)
 
     return
 
@@ -188,21 +255,21 @@ def replaceAtoms(atoms,newCoords):
     ''' Replaces the atomic coords in the atoms array with a new set of coords.'''
 
     if len(atoms)!=len(newCoords):
-	print "atom lists incompatible sizes" 
-	sys.exit(0)
+        print "atom lists incompatible sizes" 
+        sys.exit(0)
 
     newAtoms=[]
-    #loop through the raw input
+    # loop through the raw input
     for atom,newCoord in zip(atoms,newCoords):
-	#copy the line for output
-        newAtom=copy(atom)
+        # copy the line for output
+        newAtom=cp.copy(atom)
 
-        #replace the coords
-        newAtom[7]=newCoord[0]
-        newAtom[8]=newCoord[1]
-        newAtom[9]=newCoord[2]
+        # replace the coords
+        newAtom[7] = newCoord[0]
+        newAtom[8] = newCoord[1]
+        newAtom[9] = newCoord[2]
          
-        #append the data to the output array
+        # append the data to the output array
         newAtoms.append(newAtom)
 
     return newAtoms
@@ -210,23 +277,23 @@ def replaceAtoms(atoms,newCoords):
 
 def parseAtomGroupsFile(filename):
 
-    #read in the atom data
+    # read in the atom data
     atomGroupData=readTextFile(filename)
 
-    #initialise the output array
+    # initialise the output array
     atomGroups = []
     curGroup = []
     rotAtomsAngle = []
     processingFirstGroup = 1
     
-    #loop through the input data
+    # loop through the input data
     for line in atomGroupData:
-        #parse the current line
+        # parse the current line
         data=line.split()
-        #if the current line not empty then process it or do nothing
+        # if the current line not empty then process it or do nothing
         if len(data)>0:
-            #if the line is a group statement we are creating a new group.
-            #capture the rotation atom numbers
+            # if the line is a group statement we are creating a new group.
+            # capture the rotation atom numbers
             if data[0]=='GROUP':
                 # check to see if we are processing the first group.
                 if processingFirstGroup==1:
@@ -253,48 +320,48 @@ def parseAtomGroupsFile(filename):
 def rotateVector(point,axisPoint1,axisPoint2,angle):
     ''' function takes an axis defined by two points and rotates a third point about the axis by an angle given in degrees'''
 
-    #translate all points relative to the axisPoint1 and normalise the unit vector along the axis.
-    vector=point-axisPoint1
-    axis=axisPoint2-axisPoint1
-    axisNorm=axis/linalg.norm(axis)
+    # translate all points relative to the axisPoint1 and normalise the unit vector along the axis.
+    vector = point - axisPoint1
+    axis = axisPoint2 - axisPoint1
+    axisNorm = axis/np.linalg.norm(axis)
 
-    #project vector onto axis
-    axialComponent=dot(vector,axisNorm)
-    #compute the radial component
-    radialVector=vector-axialComponent*axisNorm
-    #comput the length of the radialVector
-    radialVectorMag=linalg.norm(radialVector)
+    # project vector onto axis
+    axialComponent = np.dot(vector, axisNorm)
+    # compute the radial component
+    radialVector = vector - axialComponent * axisNorm
+    # comput the length of the radialVector
+    radialVectorMag = np.linalg.norm(radialVector)
 
-    #compute the unit vectors in the radial direction and the binormal
-    radialVectorNorm=radialVector/radialVectorMag
-    binorm=cross(radialVectorNorm,axisNorm)
+    # compute the unit vectors in the radial direction and the binormal
+    radialVectorNorm = radialVector/radialVectorMag
+    binorm = np.cross(radialVectorNorm, axisNorm)
 
-    #compute the new coordinates of the vector
-    newComp1=cos(angle*pi/180.0)*radialVectorMag
-    newComp2=sin(angle*pi/180.0)*radialVectorMag
-    newVector=axialComponent*axisNorm + newComp1*radialVectorNorm + newComp2*binorm + axisPoint1
+    # compute the new coordinates of the vector
+    newComp1 = np.cos(angle * np.pi/180.0) * radialVectorMag
+    newComp2 = np.sin(angle * np.pi/180.0) * radialVectorMag
+    newVector = axialComponent * axisNorm + newComp1 * radialVectorNorm + newComp2 * binorm + axisPoint1
 
     #compute and return the final rotated vector and move it back to the original frame of reference
     return newVector
 
 def rotateAtoms(atoms,group):
     ''' Takes the group of atoms defined in the group command and rotates each one about the axis defined in the group command by the angle defined in the group command'''
-    #unpack the parameters from the group command - our array is zero based, whereas number is ith entry in list, so subtract 1
-    axisPoint1=group[0][0]-1
-    axisPoint2=group[0][1]-1
-    angle=group[0][2]
-    atomGroup=[ entry-1 for entry in group[1]]
+    # unpack the parameters from the group command - our array is zero based, whereas number is ith entry in list, so subtract 1
+    axisPoint1 = group[0][0]-1
+    axisPoint2 = group[0][1]-1
+    angle = group[0][2]
+    atomGroup = [ entry-1 for entry in group[1]]
 
     #define the rotation axis:
-    point1=array([atoms[axisPoint1][7],atoms[axisPoint1][8],atoms[axisPoint1][9]])
-    point2=array([atoms[axisPoint2][7],atoms[axisPoint2][8],atoms[axisPoint2][9]])
+    point1 = np.array([atoms[axisPoint1][7], atoms[axisPoint1][8], atoms[axisPoint1][9]])
+    point2 = np.array([atoms[axisPoint2][7], atoms[axisPoint2][8], atoms[axisPoint2][9]])
  
-    #loop through the atom group and rotate each atom by angle about the defined axis.
+    # loop through the atom group and rotate each atom by angle about the defined axis.
     for atom in atomGroup:
-        newAtomPos=rotateVector(array([atoms[atom][7], atoms[atom][8], atoms[atom][9]]),point1,point2,angle)
-        atoms[atom][7]=newAtomPos[0]
-        atoms[atom][8]=newAtomPos[1]
-        atoms[atom][9]=newAtomPos[2]
+        newAtomPos=rotateVector(np.array([atoms[atom][7], atoms[atom][8], atoms[atom][9]]),point1,point2,angle)
+        atoms[atom][7] = newAtomPos[0]
+        atoms[atom][8] = newAtomPos[1]
+        atoms[atom][9] = newAtomPos[2]
 
     return atoms
 
@@ -304,37 +371,37 @@ def rotateGroup(infile,atomGroupsFilename,outfile):
     '''Function reads in the atoms groups data and rotates each group about the axis defined in that group by a set angle.
        The new coords are then written down.  The groups are processed in the order they appear in the atomgroups file.
        The numbers in the atom groups file refer to the order the atoms appear in the pdb'''
-
-    #read in the atoms from a the file
+    print outfile
+    # read in the atoms from a the file
     atoms = readAllAtoms(infile)
 
-    #parse the atoms group instructions for rotations
+    # parse the atoms group instructions for rotations
     atomGroups = parseAtomGroupsFile(atomGroupsFilename)
 
-    #construct the new atom coords for each group defined in the atom groups file
+    # construct the new atom coords for each group defined in the atom groups file
     for group in atomGroups:
         atoms = rotateAtoms(atoms, group)
 
-    #write the output file with the new atom coords in it
-    replacePdbAtoms(infile,extractCoords(atoms),outfile)
+    # write the output file with the new atom coords in it
+    replacePdbAtoms(infile, extractCoords(atoms), outfile)
 
     return    
  
 def extractCoords(atoms):
-    return [array([atom[7],atom[8],atom[9]]) for atom in atoms]
+    return [ np.array([atom[7], atom[8], atom[9]]) for atom in atoms ]
 
    
 
-def torsionDiff(indirectory,outfile):
-    #in the current directory find the lowestN.1.pdb files
+def torsionDiff(indirectory, outfile):
+    # in the current directory find the lowestN.1.pdb files
+    print indirectory, outfile
+
+    # for each pdb file compute the torsion
 
 
-    #for each pdb file compute the torsion
-
-
-    #output the energy at the top of the file
+    # output the energy at the top of the file
     
-    #output the 
+    # output the 
 
 
 
@@ -342,17 +409,17 @@ def torsionDiff(indirectory,outfile):
 
 def breakChainIntoResidues(chain):
 
-    #create the output array
-    residues=[]
+    # create the output array
+    residues = []
 
-    #set the current Residue to the value of the first residue in the chain.
-    curRes=chain[0][5]
-    #create the dummy variable to store a list of atoms for each residue.
-    atomsInRes=[]
+    # set the current Residue to the value of the first residue in the chain.
+    curRes = chain[0][5]
+    # create the dummy variable to store a list of atoms for each residue.
+    atomsInRes = []
     
-    #go through the chain appending each atom to the dummy list.
-    #if we find the first atom in a new residue then increment the residue number and add the previous residue to the outgoing list.
-    #reset the list for the new current residue
+    # go through the chain appending each atom to the dummy list.
+    # if we find the first atom in a new residue then increment the residue number and add the previous residue to the outgoing list.
+    # reset the list for the new current residue
     for atom in chain:
         if atom[5]!=curRes:
             curRes+=1
@@ -360,29 +427,29 @@ def breakChainIntoResidues(chain):
             atomsInRes=[]
         atomsInRes.append(atom)
     
-    #append the last residue
+    # append the last residue
     residues.append(atomsInRes)
     return residues
 
 def ComputeHBondDistance(res1, res2):
     '''function extracts the H from the N H of res1 and the O from C=O of res2 and computes the length'''
-    H=[array([atom[7],atom[8],atom[9]]) for atom in res1 if atom[1]=='H'][0]
-    O=[array([atom[7],atom[8],atom[9]]) for atom in res2 if atom[1]=='O'][0]
+    H = [np.array([atom[7], atom[8], atom[9]]) for atom in res1 if atom[1]=='H'][0]
+    O = [np.array([atom[7], atom[8], atom[9]]) for atom in res2 if atom[1]=='O'][0]
 
-    return linalg.norm(H-O)
+    return np.linalg.norm(H-O)
 
 
 def computePuckerAndChi(res):
-    #compute chi's
-    chi=computeChi(res)
+    # compute chi's
+    chi = computeChi(res)
     
-    #computer the puckers return the pucker state from both methods 
-    pucker1=checkPuckerState(res)
+    # computer the puckers return the pucker state from both methods 
+    pucker1 = checkPuckerState(res)
     
-    #determine pucker based on chi1.
-    puckerChi='Endo'
+    # determine pucker based on chi1.
+    puckerChi = 'Endo'
     if chi[0]<0:
-        puckerChi='Exo'
+        puckerChi = 'Exo'
     
     #debug information both puckers should be the same.
     if pucker1!=puckerChi:
@@ -394,12 +461,12 @@ def computePuckerAndChi(res):
 def computeChi(res):
 
 #extract the relevant information from the residues and present as position vectors of atoms.
-    C=[array([atom[7],atom[8],atom[9]]) for atom in res if atom[1]=='C'][0]
-    N=[array([atom[7],atom[8],atom[9]]) for atom in res if atom[1]=='N'][0]
-    CA=[array([atom[7],atom[8],atom[9]]) for atom in res if atom[1]=='CA'][0]
-    CB=[array([atom[7],atom[8],atom[9]]) for atom in res if atom[1]=='CB'][0]
-    CG=[array([atom[7],atom[8],atom[9]]) for atom in res if atom[1]=='CG'][0]
-    CD=[array([atom[7],atom[8],atom[9]]) for atom in res if atom[1]=='CD'][0]
+    C=[np.array([atom[7],atom[8],atom[9]]) for atom in res if atom[1]=='C'][0]
+    N=[np.array([atom[7],atom[8],atom[9]]) for atom in res if atom[1]=='N'][0]
+    CA=[np.array([atom[7],atom[8],atom[9]]) for atom in res if atom[1]=='CA'][0]
+    CB=[np.array([atom[7],atom[8],atom[9]]) for atom in res if atom[1]=='CB'][0]
+    CG=[np.array([atom[7],atom[8],atom[9]]) for atom in res if atom[1]=='CG'][0]
+    CD=[np.array([atom[7],atom[8],atom[9]]) for atom in res if atom[1]=='CD'][0]
     
 #Only need the following to generate an AUX for Xi which is a weird dihedral from parker. Not so bothered.
 #     if res[0][3]=='PRO':
@@ -421,12 +488,12 @@ def computeChi(res):
 #     if res[0][3]=='HYP':
 #         AUX=[array([atom[7],atom[8],atom[9]]) for atom in res if atom[1]=='OD1'][0]
 
-    #compute Chis
-    chi1=computeDihedral(N,CA,CB,CG)
-    chi2=computeDihedral(CA,CB,CG,CD)
-    chi3=computeDihedral(CB,CG,CD,N)
-    chi4=computeDihedral(CG,CD,N,CA)
-    chi5=computeDihedral(CD,N,CA,CB)
+    # compute Chis
+    chi1 = computeDihedral(N,CA,CB,CG)
+    chi2 = computeDihedral(CA,CB,CG,CD)
+    chi3 = computeDihedral(CB,CG,CD,N)
+    chi4 = computeDihedral(CG,CD,N,CA)
+    chi5 = computeDihedral(CD,N,CA,CB)
      
     if chi1[1]==1:
         print 'N,CA,CB,CG are colinear in residue: '+str(res[0][5])
@@ -444,28 +511,28 @@ def computeChi(res):
 def computeTorsion(res0,res1,res2):
 
     #extract the relevant information from the residues and present as position vectors of atoms.
-    C0=[array([atom[7],atom[8],atom[9]]) for atom in res0 if atom[1]=='C'][0]
-    N1=[array([atom[7],atom[8],atom[9]]) for atom in res1 if atom[1]=='N'][0]
-    CA1=[array([atom[7],atom[8],atom[9]]) for atom in res1 if atom[1]=='CA'][0]
-    C1=[array([atom[7],atom[8],atom[9]]) for atom in res1 if atom[1]=='C'][0]
-    N2=[array([atom[7],atom[8],atom[9]]) for atom in res2 if atom[1]=='N'][0]
-    CA2=[array([atom[7],atom[8],atom[9]]) for atom in res2 if atom[1]=='CA']
-    CA2Exists=0
+    C0 = [np.array([atom[7],atom[8],atom[9]]) for atom in res0 if atom[1]=='C'][0]
+    N1 = [np.array([atom[7],atom[8],atom[9]]) for atom in res1 if atom[1]=='N'][0]
+    CA1 = [np.array([atom[7],atom[8],atom[9]]) for atom in res1 if atom[1]=='CA'][0]
+    C1 = [np.array([atom[7],atom[8],atom[9]]) for atom in res1 if atom[1]=='C'][0]
+    N2 = [np.array([atom[7],atom[8],atom[9]]) for atom in res2 if atom[1]=='N'][0]
+    CA2 = [np.array([atom[7],atom[8],atom[9]]) for atom in res2 if atom[1]=='CA']
+    CA2Exists = 0
     if CA2:
-        CA2Exists=1    
-        CA2=CA2[0]
+        CA2Exists = 1    
+        CA2 = CA2[0]
     
     #compute phi; the C0'-N1-Ca1-C1' dihedral. Requires res0 and res1
-    phi=computeDihedral(C0,N1,CA1,C1)
+    phi = computeDihedral(C0,N1,CA1,C1)
 
     #compute psi; the N1-Ca1-C1'-N2 dihedral. Requires res1 and res2
-    psi=computeDihedral(N1,CA1,C1,N2)
+    psi = computeDihedral(N1,CA1,C1,N2)
 
     #compute omega; the Ca1-C1-N2-CA2 dihedral. Requires res1 and res2
     if CA2Exists:
-        omega=computeDihedral(CA1,C1,N2,CA2)
+        omega = computeDihedral(CA1,C1,N2,CA2)
     else:
-        omega=[0.0, 0]
+        omega = [0.0, 0]
         
     if phi[1]==1:
         print 'C0,N1 and CA1 are colinear in residue: '+str(res1[0][5])
@@ -476,60 +543,59 @@ def computeTorsion(res0,res1,res2):
     return [phi[0],psi[0],omega[0]]
 
 #Yings definition of torsion angles
-def calcTorsionangle(atom1,atom2,atom3,atom4):
+def calcTorsionangle(atom1, atom2, atom3, atom4):
    
     vec1 = atom2 - atom1
     vec2 = atom3 - atom2
     vec3 = atom4 - atom3
-    return arctan2( vdot( linalg.norm(vec2)*vec1 , cross(vec2,vec3) ), vdot( cross(vec1,vec2), cross(vec2, vec3)) )*180/pi
+    return np.arctan2( np.vdot( np.linalg.norm(vec2)*vec1 , np.cross(vec2,vec3) ), np.vdot( np.cross(vec1,vec2), np.cross(vec2, vec3)) )*180/np.pi
     
 
-#given four vectors compute the dihedral about the line connecting P2 to P3.
-#checks for colinearity and returns the angle in degrees and a flag indicating 
-#whether or colinearity was detected. IN the latter case the angle defaults to 0.
-#
+# given four vectors compute the dihedral about the line connecting P2 to P3.
+# checks for colinearity and returns the angle in degrees and a flag indicating 
+# whether or colinearity was detected. IN the latter case the angle defaults to 0.
 def computeDihedral(P1,P2,P3,P4):
  
-    #construct the in plane vectors V1 and U1 are both plane V and U respectively. UV is in both.
-    U1=P2-P1
-    U1=U1/linalg.norm(U1)
-    UV=P3-P2
-    UV=UV/linalg.norm(UV)
-    V1=P4-P3
-    V1=V1/linalg.norm(V1)
+    # construct the in plane vectors V1 and U1 are both plane V and U respectively. UV is in both.
+    U1 = P2-P1
+    U1 = U1/np.linalg.norm(U1)
+    UV = P3-P2
+    UV = UV/np.linalg.norm(UV)
+    V1 = P4-P3
+    V1 = V1/np.linalg.norm(V1)
 
-    #compute the dot product between the input vectors
-    COSU=vdot(U1,UV)
-    COSV=vdot(V1,UV)
+    # compute the dot product between the input vectors
+    COSU = np.vdot(U1,UV)
+    COSV = np.vdot(V1,UV)
 
-    #set the default output value
-    theta=0.0
-    colinear=0
-    #check for colinearity (COSU=1 or COSV=1)
+    # set the default output value
+    theta = 0.0
+    colinear = 0
+    # check for colinearity (COSU=1 or COSV=1)
     if (1.0-abs(COSU))>1E-6 and (1.0-abs(COSV))>1E-6:
-        #Compute the normals to the planes
-        N1=cross(U1,UV)
-        N1=N1/linalg.norm(N1)
-        N2=cross(UV,V1)
-        N2=N2/linalg.norm(N2)
+        # Compute the normals to the planes
+        N1 = np.cross(U1, UV)
+        N1 = N1/np.linalg.norm(N1)
+        N2 = np.cross(UV, V1)
+        N2 = N2/np.linalg.norm(N2)
         
-        #compute the binormal to N1 and UV.
-        M1=cross(UV,N1)
+        # compute the binormal to N1 and UV.
+        M1 = np.cross(UV,N1)
         
-        #compute the components of N2 in the frame N1,UV,M1. The component of N2 along UV is always zero by definition.
-        COSTHETA=vdot(N1,N2)
-        SINTHETA=vdot(M1,N2)
+        # compute the components of N2 in the frame N1,UV,M1. The component of N2 along UV is always zero by definition.
+        COSTHETA = np.vdot(N1,N2)
+        SINTHETA = np.vdot(M1,N2)
 
-        #shave off rounding and precision errors. COSTHETA should never be higher than 1 since N1 and N2 are normalised -doesn't matter too much in atan2 function.
+        # shave off rounding and precision errors. COSTHETA should never be higher than 1 since N1 and N2 are normalised -doesn't matter too much in atan2 function.
         if COSTHETA>1.0:
             COSTHETA=1.0
 
-        #Use the atan2 function which gives correct sign and a range between -180 and 180 in degrees,
-        theta=degrees(arctan2(SINTHETA,COSTHETA))
+        # Use the atan2 function which gives correct sign and a range between -180 and 180 in degrees,
+        theta = np.degrees(np.arctan2(SINTHETA,COSTHETA))
     else:
-        colinear=1
+        colinear = 1
 
-    return theta,colinear
+    return theta, colinear
 
 
 def puckerBreakDown(infile):
@@ -545,7 +611,7 @@ def puckerBreakDown(infile):
     puckerState=[]
     for chain in chains:
         puckerStateChain=checkPuckerList(chain)
-	curChainColPos=[ idGXYPatternRes(puckerStateChain,residue[0]) for residue in puckerStateChain]
+        curChainColPos=[ idGXYPatternRes(puckerStateChain,residue[0]) for residue in puckerStateChain]
         colPos=colPos+curChainColPos
         puckerState=puckerState+puckerStateChain
     
@@ -586,29 +652,29 @@ def puckerBreakDown(infile):
                     numYHypExo+=1
     
     
-    TotalEndo=numXProEndo+numXHypEndo+numYProEndo+numYHypEndo
-    TotalExo=numXProExo+numXHypExo+numYProExo+numYHypExo
-    TotalProline=numXProEndo+numYProEndo+numXProExo+numYProExo
-    TotalHyp=numXHypEndo+numYHypEndo+numXHypExo+numYHypExo
-    TotalX=numXProEndo+numXProExo+numXHypEndo+numXHypExo
-    TotalY=numYProEndo+numYProExo+numYHypEndo+numYHypExo
+    # TotalEndo = numXProEndo+numXHypEndo+numYProEndo+numYHypEndo
+    # TotalExo = numXProExo+numXHypExo+numYProExo+numYHypExo
+    # TotalProline = numXProEndo+numYProEndo+numXProExo+numYProExo
+    # TotalHyp = numXHypEndo+numYHypEndo+numXHypExo+numYHypExo
+    TotalX = numXProEndo+numXProExo+numXHypEndo+numXHypExo
+    TotalY = numYProEndo+numYProExo+numYHypEndo+numYHypExo
     
-    TotalXEndo=numXProEndo+numXHypEndo
-    TotalYEndo=numYProEndo+numYHypEndo
-    TotalXExo=numXProExo+numXHypExo
-    TotalYExo=numYProExo+numYHypExo
+    # TotalXEndo = numXProEndo+numXHypEndo
+    # TotalYEndo = numYProEndo+numYHypEndo
+    # TotalXExo = numXProExo+numXHypExo
+    # TotalYExo = numYProExo+numYHypExo
     
-    TotalXPro=numXProExo+numXProEndo
-    TotalYPro=numYProExo+numYProEndo
-    TotalXHyp=numXHypExo+numXHypEndo
-    TotalYHyp=numYHypExo+numYHypEndo
+    # TotalXPro = numXProExo+numXProEndo
+    # TotalYPro = numYProExo+numYProEndo
+    # TotalXHyp = numXHypExo+numXHypEndo
+    # TotalYHyp = numYHypExo+numYHypEndo
     
-    TotalProEndo=numXProEndo+numYProEndo
-    TotalProExo=numXProExo+numYProEndo
-    TotalHypEndo=numXHypEndo+numXHypEndo
-    TotalHypExo=numXHypExo+numYHypExo
+    # TotalProEndo = numXProEndo+numYProEndo
+    # TotalProExo = numXProExo+numYProEndo
+    # TotalHypEndo = numXHypEndo+numXHypEndo
+    # TotalHypExo = numXHypExo+numYHypExo
     
-    Total=TotalX+TotalY
+    Total = TotalX+TotalY
     
     print "numXProlineEndo: ",str(numXProEndo), "  Total %age: "+str(float(numXProEndo)/float(Total))
     print "numXProlineExo: ",str(numXProExo), "  Total %age: "+str(float(numXProExo)/float(Total))
@@ -624,9 +690,9 @@ def puckerBreakDown(infile):
     return
   
 def residueInfo(infile,outfile):
-    atoms=readAllAtoms(infile)
+    atoms = readAllAtoms(infile)
   
-    outputArray=generateResidueInformation(atoms)
+    outputArray = generateResidueInformation(atoms)
 
     outputLines=[]
     
@@ -765,7 +831,7 @@ def idGXYPatternAll(resList):
     outList=[firstRes]
     curRes=firstRes
     #zip through the rest of the list incrementing the residue appending a G, X or Y in turn
-    for res in resList[1:]:
+    for _ in resList[1:]:
         if curRes=='G':
             curRes='X'
         else:
@@ -779,8 +845,6 @@ def idGXYPatternAll(resList):
     return outList
     
     
-    
-
 #format of res list is [[1,'PRO'],[2,'GLY'],... etc ]
 def idGXYPatternRes(resList,res):
     '''Computes the collagen GXY pattern of the specified residue in the given resList. Assumes resList is a single chain only'''
@@ -1024,7 +1088,7 @@ def readTextFile(filename):
         vst = open(filename, 'r')
     except IOError as e:
         print "I/O error({0}): {1}".format(e.errno, e.strerror)
-        raise Exception, "Unable to open input file: "+filename
+        raise Exception, "Unable to open input file: " + filename
     lines = vst.readlines()
     vst.close()
     return lines
@@ -1071,58 +1135,57 @@ def extractAtomsFromPDB(lines):
     return atoms
 
 
-def removeDuplicateAtoms(infile,outfile):
+def removeDuplicateAtoms(infile, outfile):
 
-    #load the data
-    lines=readTextFile(infile)
+    # load the data
+    lines = readTextFile(infile)
 
-    #initialise variables
-    newPDB=[]
-    prevLineAdded=''
-    curAtomNum=1
+    # initialise variables
+    newPDB = []
+    prevLineAdded = ''
+    curAtomNum = 1
 
     #loop through each line in the pdb file
     for line in lines:
-        #assume we are adding the line
-        addLine=1
+        # assume we are adding the line
+        addLine = 1
 
-        #check to see if it is an Atom
+        # check to see if it is an Atom
         if line[0:4]=='ATOM':
           
-          #extract the atomic information
-          curAtom=parsePdbLine(line)
+            #extract the atomic information
+            curAtom = parsePdbLine(line)
 
-          #scan through the output pdb file to see if the atom has already been added
-          for outputLine in newPDB:
-              #if the line from the output pdb is an atom then parse the data
-              if outputLine[0:4]=='ATOM':
-                 outputAtom=parsePdbLine(outputLine)
+            # scan through the output pdb file to see if the atom has already been added
+            for outputLine in newPDB:
+                # if the line from the output pdb is an atom then parse the data
+                if outputLine[0:4]=='ATOM':
+                    outputAtom = parsePdbLine(outputLine)
  
-                 #if the xyz positions are the same then the curAtom has already been output
-                 #so do not output the curAtom.
-                 if (outputAtom[7]==curAtom[7]) and (outputAtom[8]==curAtom[8]) and (outputAtom[9]==curAtom[9]):
-                   addLine=0
+                    # if the xyz positions are the same then the curAtom has already been output
+                    # so do not output the curAtom.
+                    if (outputAtom[7]==curAtom[7]) and (outputAtom[8]==curAtom[8]) and (outputAtom[9]==curAtom[9]):
+                        addLine=0
 
-          #check we're still adding the line, if so then modify the atomic number
-          if addLine==1:
-             curAtom[0]=curAtomNum
-             curAtomNum+=1# ready for next one
-             #convert atom to text line
-             line=pdbLineFromAtom(curAtom)
+            # check we're still adding the line, if so then modify the atomic number
+            if addLine==1:
+                curAtom[0] = curAtomNum
+                curAtomNum += 1 # ready for next one
+            
+                # convert atom to text line
+                line = pdbLineFromAtom(curAtom)
 
         elif line[0:3]=='TER':
-           if prevLineAdded=='TER':
-               addLine=0
-        else:
-           lastLine=''
+            if prevLineAdded=='TER':
+                addLine = 0
 
         #if we're still adding the line after all that then add it...
         if addLine==1:
-           newPDB.append(line)
-           prevLineAdded=line[0:3]
+            newPDB.append(line)
+            prevLineAdded=line[0:3]
 
-        #output data to text
-        writeTextFile(newPDB,outfile)
+    # output final data to text
+    writeTextFile(newPDB, outfile)
 
     return
 
@@ -1132,22 +1195,28 @@ def removeDuplicateAtoms(infile,outfile):
 def removeLines(lines, items):
     newPDB=[]
     lastLineAdded=''
+    numLinesRemoved = 0
     for line in lines:
-        addLine=1
+        addLine = 1
         if line[0:4]=='ATOM':
-          atom=parsePdbLine(line)
-          for item in items:
-            a=item.split()
-            if a[0] in atom[int(a[1])]:
-               addLine=0
+            atom = parsePdbLine(line)
+            # print atom
+            for item in items:
+                a = item.split()
+                # print a, atom[int(a[1])]
+                if a[0] in atom[int(a[1])]:
+                    addLine=0
         elif line[0:3]=='TER':
-           if lastLineAdded=='TER':
-               addLine=0
+            if lastLineAdded=='TER':
+                addLine=0
         else:
-           lastLine=''
+            lastLineAdded = ''
         if addLine==1:
-           newPDB.append(line)
-           lastLineAdded=line[0:3]
+            newPDB.append(line)
+            lastLineAdded = line[0:3]
+        else:
+            numLinesRemoved += 1
+    print "Number of lines removed: ", numLinesRemoved
     return newPDB
 
 
@@ -1183,43 +1252,43 @@ def findAtom(atomType,atoms,res):
     return atomOut
 
 
-#generates a list of residues in each chain
+# generates a list of residues in each chain
 def findChains(pdbInfo):
-        chainList=[]
-        curChain=[]
-        for line in pdbInfo:
-            if line[0:3]=='TER':
-               chainList.append(curChain)
-               curChain=[]
-            elif line[0:4]=='ATOM':
-               atom=parsePdbLine(line)
-               if not [atom[5],atom[3]] in curChain:
-                  curChain.append([atom[5],atom[3]])
-	return chainList
+    chainList = []
+    curChain = []
+    for line in pdbInfo:
+        if line[0:3]=='TER':
+            chainList.append(curChain)
+            curChain = []
+        elif line[0:4]=='ATOM':
+            atom = parsePdbLine(line)
+            if not [atom[5],atom[3]] in curChain:
+                curChain.append([atom[5],atom[3]])
+    return chainList
 
 
 #routine for checking the state of a residue - assumes this is a proline or hydroxyproline
 #and that the residue is a list of the atoms which belong to a only single residue.
 def checkPuckerState(residue):
 
-    NPOS=[array([atom[7],atom[8],atom[9]]) for atom in residue if atom[1]=='N'][0]
-    CAPOS=[array([atom[7],atom[8],atom[9]]) for atom in residue if atom[1]=='CA'][0]
-    CBPOS=[array([atom[7],atom[8],atom[9]]) for atom in residue if atom[1]=='CB'][0]
-    CGPOS=[array([atom[7],atom[8],atom[9]]) for atom in residue if atom[1]=='CG'][0]
-    CDPOS=[array([atom[7],atom[8],atom[9]]) for atom in residue if atom[1]=='CG'][0]
-    CPOS=[array([atom[7],atom[8],atom[9]]) for atom in residue if atom[1]=='C'][0]
+    NPOS=[np.array([atom[7],atom[8],atom[9]]) for atom in residue if atom[1]=='N'][0]
+    CAPOS=[np.array([atom[7],atom[8],atom[9]]) for atom in residue if atom[1]=='CA'][0]
+    CBPOS=[np.array([atom[7],atom[8],atom[9]]) for atom in residue if atom[1]=='CB'][0]
+    CGPOS=[np.array([atom[7],atom[8],atom[9]]) for atom in residue if atom[1]=='CG'][0]
+    # CDPOS=[np.array([atom[7],atom[8],atom[9]]) for atom in residue if atom[1]=='CG'][0]
+    CPOS=[np.array([atom[7],atom[8],atom[9]]) for atom in residue if atom[1]=='C'][0]
 
     #Method 1 - Chi1 - N - Calpha - CBeta forms a plane. IF CGamma and C are on same 
     #sides of plane then we are Endo - same as Chi1 is +ve/-ve.
     puckerState='Exo'
-    NCA=CAPOS-NPOS
-    CACB=CBPOS-CAPOS
-    n=cross(NCA,CACB)
-    n=n/linalg.norm(n)
-    NCG=CGPOS-NPOS
-    NC=CPOS-NPOS
-    CGZ=vdot(NCG,n)
-    CZ=vdot(NC,n)
+    NCA = CAPOS-NPOS
+    CACB = CBPOS-CAPOS
+    n = np.cross(NCA,CACB)
+    n = n/np.linalg.norm(n)
+    NCG = CGPOS-NPOS
+    NC = CPOS-NPOS
+    CGZ = np.vdot(NCG,n)
+    CZ = np.vdot(NC,n)
     if CGZ*CZ > 0:
         puckerState='Endo'
 
@@ -1264,51 +1333,51 @@ def convertPuckerState(residue,state):
 
     #set the default output
     newResidue=[]
-    DG=array([0,0,0])
+    DG = np.array([0,0,0])
 
     #check to see if the residue needs converting
     if currentPuckerState!=state[0]:
-       #Find the N, CAlpha and CBeta to define the base plane.
-       NPOS=[array([curAtom[7],curAtom[8],curAtom[9]]) for curAtom in residue if 'N'==curAtom[1]][0]
-       CAPOS=[array([curAtom[7],curAtom[8],curAtom[9]]) for curAtom in residue if 'CA'==curAtom[1]][0]
-       CBPOS=[array([curAtom[7],curAtom[8],curAtom[9]]) for curAtom in residue if 'CB'==curAtom[1]][0]
-       CGPOS=[array([curAtom[7],curAtom[8],curAtom[9]]) for curAtom in residue if 'CG'==curAtom[1]][0]
+        #Find the N, CAlpha and CBeta to define the base plane.
+        NPOS = [np.array([curAtom[7],curAtom[8],curAtom[9]]) for curAtom in residue if 'N'==curAtom[1]][0]
+        CAPOS = [np.array([curAtom[7],curAtom[8],curAtom[9]]) for curAtom in residue if 'CA'==curAtom[1]][0]
+        CBPOS = [np.array([curAtom[7],curAtom[8],curAtom[9]]) for curAtom in residue if 'CB'==curAtom[1]][0]
+        CGPOS = [np.array([curAtom[7],curAtom[8],curAtom[9]]) for curAtom in residue if 'CG'==curAtom[1]][0]
 
-       #compute vectors in the N-CA-CB plane
-       NCA=CAPOS-NPOS
-       CBCA=CBPOS-CAPOS
+        # compute vectors in the N-CA-CB plane
+        NCA=CAPOS-NPOS
+        CBCA=CBPOS-CAPOS
 
-       #find n
-       n=cross(NCA,CBCA)
-       n=n/linalg.norm(n)
+        # find n
+        n = np.cross(NCA, CBCA)
+        n = n/linalg.norm(n)
 
-       #gamma relative to N (taken as origin)
-       NCG=CGPOS-NPOS
+        # gamma relative to N (taken as origin)
+        NCG = CGPOS-NPOS
 
 
-       #find distance of gamma from plane:
-       CGDIST=vdot(NCG,n)
+        # find distance of gamma from plane:
+        CGDIST = np.vdot(NCG,n)
 
          
-       #reflect gamma into plane
-       CGREF=NCG-2.0*CGDIST*n
+        # reflect gamma into plane
+        CGREF = NCG - 2.0 * CGDIST * n
 
 
-       #Translate gamma back into lab frame
-       CGNEW=CGREF+NPOS
+        # Translate gamma back into lab frame
+        CGNEW = CGREF + NPOS
 
-       #find translation of gamma group
-       DG=CGNEW-CGPOS
+        # find translation of gamma group
+        DG = CGNEW - CGPOS
     
 
-    #output all the atoms, translating those attached to the CG by DG, keeping their relative positions the same
+    # output all the atoms, translating those attached to the CG by DG, keeping their relative positions the same
     for atom in residue:
-        newatom=copy(atom)
+        newatom = cp.copy(atom)
         if atom[1] in ['CG','OD1','HG2','HG3']:
-           atomPos=array([atom[7],atom[8],atom[9]])+DG
-           newatom[7]=atomPos[0]
-           newatom[8]=atomPos[1]
-           newatom[9]=atomPos[2]
+            atomPos = np.array([atom[7],atom[8],atom[9]])+DG
+            newatom[7] = atomPos[0]
+            newatom[8] = atomPos[1]
+            newatom[9] = atomPos[2]
 
         newResidue.append(newatom)
 
@@ -1318,8 +1387,8 @@ def convertPdbPucker(pdb,puckerState):
     #generate list of unique residues for which the pucker state is specified in the file
     puckerResiduesList=[]
     for puckerRes in puckerState:
-       if not puckerRes[0] in puckerResiduesList:
-          puckerResiduesList.append(puckerRes[0])
+        if not puckerRes[0] in puckerResiduesList:
+            puckerResiduesList.append(puckerRes[0])
 
     #copy the old pdb across one line at a time into a new array.
     #if we are processing an atom line and the atom belongs to a residue in the puckerResidueslist 
@@ -1332,44 +1401,43 @@ def convertPdbPucker(pdb,puckerState):
 
     #loop through the pdb file
     for line in pdb:
-       if line[0:4]=='ATOM':
-           #if we're dealing with an atom, extract the atom information
-           atom=parsePdbLine(line)
+        if line[0:4]=='ATOM':
+            #if we're dealing with an atom, extract the atom information
+            atom = parsePdbLine(line)
 
-           #is the atom in the residue list
-           if atom[5] in puckerResiduesList:
-              #has it been dealt with already; if so then do nothing.
-              if not atom[5] in dealtWithResidueList:
+            # is the atom in the residue list
+            if atom[5] in puckerResiduesList:
+                # has it been dealt with already; if so then do nothing.
+                if not atom[5] in dealtWithResidueList:
+                    try:
+                        # create a list of all the atoms in the current residue in whatever order they appear in file
+                        currentResidueAtoms=[curResAtom for curResAtom in atoms if curResAtom[5]==atom[5]]
 
-                 try:
-                     #create a list of all the atoms in the current residue in whatever order they appear in file
-                     currentResidueAtoms=[curResAtom for curResAtom in atoms if curResAtom[5]==atom[5]]
+                        # find out what state to convert the proline to
+                        convertPuckerToState=[ convState[2] for convState in puckerState if convState[0]==atom[5]]
+    
+                        # generate the new list of residues
+                        newResidue=convertPuckerState(currentResidueAtoms,convertPuckerToState)
+    
+                        # copy the new list to the output list
+                        for atomNewResidue in newResidue:
+                            newPdbLine=pdbLineFromAtom(atomNewResidue)
+                            newPdb.append(newPdbLine)
+    
+                        # now it been dealt with then register residue as being done.
+                        dealtWithResidueList.append(atom[5])
+     
+                    except:
+                        print "unable to process atom: "
+                        print atom
+                        exit(1)
 
-                     #find out what state to convert the proline to
-                     convertPuckerToState=[ convState[2] for convState in puckerState if convState[0]==atom[5]]
-
-                     #generate the new list of residues
-                     newResidue=convertPuckerState(currentResidueAtoms,convertPuckerToState)
-
-                     #copy the new list to the output list
-                     for atomNewResidue in newResidue:
-                        newPdbLine=pdbLineFromAtom(atomNewResidue)
-                        newPdb.append(newPdbLine)
-
-                     #now it been dealt with then register residue as being done.
-                     dealtWithResidueList.append(atom[5])
- 
-                 except:
-                     print "unable to process atom: "
-                     print atom
-                     exit(1)
-
-           else:
-              #if atom does not belong to a residue in the convert list copy it straight across.
-              newPdb.append(line)
-       else:
-           #not an atom line so just copy across
-           newPdb.append(line)    
+            else:
+                # if atom does not belong to a residue in the convert list copy it straight across.
+                newPdb.append(line)
+        else:
+            # not an atom line so just copy across
+            newPdb.append(line)    
 
     return newPdb
 
@@ -1377,14 +1445,14 @@ def readPuckerData(filename):
     puckerStateLines=readTextFile(filename)
     puckStateList=[]
     try:
-       for residue in puckerStateLines:
-           data=residue.split()
-           #print data,len(data)
-           if data[1]=='HYP' or data[1]=='PRO':
-              puckStateList.append([int(data[0]),data[1],data[2]])
+        for residue in puckerStateLines:
+            data=residue.split()
+            # print data,len(data)
+            if data[1]=='HYP' or data[1]=='PRO':
+                puckStateList.append([int(data[0]),data[1],data[2]])
     except:
-       print "Unable to read pucker file:"+filename
-       sys.exit(1)
+        print "Unable to read pucker file:"+filename
+        sys.exit(1)
 
     return puckStateList
 
@@ -1395,21 +1463,21 @@ def writePuckerData(outfile,pucker):
     except:
         raise Exception, "Unable to open outfile: "+outfile
     for puck in pucker:
-      try:
-         outStr=str(puck[0])+' '+puck[1]+' '+puck[2]+'\n'
-      except:
-         outStr=str(puck[0])+' '+puck[1]+'\n'
+        try:
+            outStr=str(puck[0])+' '+puck[1]+' '+puck[2]+'\n'
+        except:
+            outStr=str(puck[0])+' '+puck[1]+'\n'
 
-     # print outStr
- 
-      vst.write(outStr)
+        # print outStr
+        vst.write(outStr)
+    
     vst.close()
     return
 
 def fileRootFromInfile(infile):
     fileroot=infile
     if ".pdb" in infile:
-        fileroot=replace(infile,'.pdb','',1)
+        fileroot = strg.replace(infile,'.pdb','',1)
     return fileroot
 
 def readpucker(infile,params):
@@ -1434,35 +1502,278 @@ def writepucker(infile,params):
     return
 
 
-def removeLineList(infile,params):
+def removeLineList(infile, params):
     #unpack parameters
-    rulefile=params[0]
-    outfile=params[1]
+    rulefile = params[0]
+    outfile = params[1]
  
     #perform required operations
     pdb=readTextFile(infile)
     #print "pdb"
     #print pdb[0:3]
   
-    itemsToRemove=readTextFile(rulefile)
+    itemsToRemove = readTextFile(rulefile)
     print "itemsToRemove" 
     print itemsToRemove
-    newPDB=removeLines(pdb,itemsToRemove)
-    writeTextFile(newPDB,outfile)
+    newPDB = removeLines(pdb, itemsToRemove)
+    writeTextFile(newPDB, outfile)
     return
 
+# searches a list breaking when it find the first occurence of the substring in the list  
+def findSubstringInList(the_list, substring, startAtEnd=False):
+    retVal = -1 # assume failure
+    
+    if startAtEnd:
+        # reverses the list and calls the function again to search from the beginning...
+        retVal = findSubstringInList(reversed(the_list), substring, startAtEnd=False)
+        if retVal>=0:
+            retVal = len(the_list) - 1 - retVal
+    else:
+        # search the list breaking when we find the substring
+        for idx, s in enumerate(the_list):
+            if substring in s:
+                # set the retVal to the index where we encounter the substring for the first time
+                retVal = idx
+                break        
+    return retVal
+
+
+def addTermini(infile, params):
+    # Adds Termini to the beginning or end of a PDB
+    # doesn't handle chains
+    
+    addN = False
+    addC = False
+    
+    for param in params:
+        if 'N' in param:
+            addN = True
+            try:
+                NAlpha = float(param.split(',')[0][2:]) * np.pi/180.0
+                NBeta = float(param.split(',')[1][0:]) * np.pi/180.0
+            except:
+                NAlpha = 0 * np.pi/180
+                NBeta = 109 * np.pi/180
+                
+        if 'C' in param:
+            addC = True
+            try:
+                CAlpha = float(param.split(',')[0][2:]) * np.pi/180.0
+                CBeta = float(param.split(',')[1][0:]) * np.pi/180.0
+            except:
+                CAlpha = 0 * np.pi/180.0
+                CBeta = 109 * np.pi/180.0
+       
+    if addN==addC==False:
+        print "Trying to add Termini but no termini were specified: ", params
+        exit(1)
+    
+    # load the pdb info
+    pdb = readTextFile(infile)
+    
+    # generate a list of atoms
+    atoms = extractAtomsFromPDB(pdb)
+    
+    # generate a list of residues - interested in the first and last residues and their names
+    residues = [ [atom[5], atom[3]] for atom in atoms ]
+    
+    if addN: 
+        if residues[0][1]=='ACE':
+            print "N terminus already terminated with ACE"
+        else:
+            # generate the points to construct the TNB frame at end of chain
+            for atom in atoms[0:30]:
+                if (atom[5] == residues[0][0]): 
+                    if atom[1]=='N':
+                        NPos = np.array([atom[7], atom[8], atom[9]])
+                    if atom[1]=='CA':                                        
+                        CAPos = np.array([atom[7], atom[8], atom[9]])
+                    if atom[1]=='C':                                        
+                        CPos = np.array([atom[7], atom[8], atom[9]])
+
+            # compute the position of the new terminus atom.
+            bondlength = np.linalg.norm(NPos - CAPos)
+            TNBFrame = constructTNBFrame(CPos, CAPos, NPos)
+            ACEPos = NPos + bondlength * generateTNBVecXYZ(TNBFrame, NBeta, NAlpha) 
+
+            # construct the information for the N terminus record
+            NTerm = [' ']*15
+            NTerm[0] = 0
+            NTerm[1] = ' C'
+            NTerm[2] = ' '
+            NTerm[3] = 'ACE'
+            NTerm[4] = ' '
+            NTerm[5] = residues[0][0] - 1
+            NTerm[6] = ' '
+            NTerm[7] = ACEPos[0]
+            NTerm[8] = ACEPos[1]
+            NTerm[9] = ACEPos[2]
+            NTerm[10] = 1.0
+            NTerm[11] = 0.0
+            NTerm[12] = '    '
+            NTerm[13] = ' '
+            NTerm[14] = ' '
+            
+            # convert record into a pdb string
+            ACEString = pdbLineFromAtom(NTerm)
+            
+            # figure out where to insert the string
+            indexOfFirstAtom = findSubstringInList(pdb, 'ATOM', startAtEnd=False)
+            
+            # insert the ACE String at the right point
+            pdb.insert(indexOfFirstAtom, ACEString)
+                   
+            print "ACE added to N Terminus."
+                   
+    if addC:
+        if residues[-1][1]=='NME':
+            print "C terminus already terminated with NME"
+        else:
+            for atom in atoms[-30:]:
+                if (atom[5] == residues[-1][0]): 
+                    if atom[1]=='N':
+                        NPos = np.array([atom[7], atom[8], atom[9]])
+                    if atom[1]=='CA':                                        
+                        CAPos = np.array([atom[7], atom[8], atom[9]])
+                    if atom[1]=='C':                                        
+                        CPos = np.array([atom[7], atom[8], atom[9]])
+    
+            bondlength = np.linalg.norm(NPos - CAPos)
+            TNBFrame = constructTNBFrame(NPos, CAPos, CPos)
+            NMEPos = CPos + bondlength * generateTNBVecXYZ(TNBFrame, CBeta, CAlpha) 
+            
+            # find the correct index at which to place the new string
+            indexOfLastAtom = findSubstringInList(pdb, 'ATOM', startAtEnd=True)
+            lastAtomNum = int(parsePdbLine(pdb[indexOfLastAtom])[0])
+                                    
+            CTerm = [' ']*15
+            CTerm[0] = lastAtomNum + 1 
+            CTerm[1] = ' N'
+            CTerm[2] = ' '
+            CTerm[3] = 'NME'
+            CTerm[4] = ' '
+            CTerm[5] = residues[-1][0] + 1
+            CTerm[6] = ' '
+            CTerm[7] = NMEPos[0]
+            CTerm[8] = NMEPos[1]
+            CTerm[9] = NMEPos[2]
+            CTerm[10] = 1.0
+            CTerm[11] = 0.0
+            CTerm[12] = '    '
+            CTerm[13] = ' '
+            CTerm[14] = ' '
+            
+            # generate the NME string
+            NMEString = pdbLineFromAtom(CTerm)
+            
+            
+            # insert the ACE String at the right point (after the last atom hence + 1)
+            pdb.insert(indexOfLastAtom + 1, NMEString)
+            
+            print "NME added to C Terminus."
+            
+            # replace the terminal string with a simple ter
+            indexOfTer = findSubstringInList(pdb, 'TER', startAtEnd=True)
+            pdb[indexOfTer] = 'TER\n'
+        
+    # output the new file
+    outfile = fileRootFromInfile(infile) + '_term.pdb'
+    writeTextFile(pdb, outfile)
+
+def fragmentPDB(infile, params):
+    # assume only one chain
+    pdb = readTextFile(infile)
+    resData = readTextFile(params)
+    fileRoot = fileRootFromInfile(infile)
+    
+    for resPair in resData:
+        
+        try:
+            firstRes = int(resPair.split()[0])
+            secondRes = int(resPair.split()[1])
+            print "Residue Pair: ", firstRes, secondRes
+        except:
+            print "Invalid res pair: ", resPair, " in file: ", params
+            exit(1)
+        
+        filename = fileRoot + '_' + str(firstRes).zfill(4) + '_' + str(secondRes).zfill(4) + '.pdb'
+
+        outList = []
+
+        for line in pdb:        
+
+            # default is to output the line verbatim
+            outputString = line
+        
+            # assuming we are keeping the line from the pdb
+            skip = 0
+        
+            # split up each line into tokens.
+            vals=line.split()
+            
+            # skip anisou lines
+            if vals[0] in ['ANISOU']:
+                skip=1
+
+            # if we are dealing with an atom or hetatom
+            if vals[0] in ['HETATM', 'ATOM']:
+            
+                # parse the pdb line
+                atom = parsePdbLine(line)  
+          
+                # check to see if we are keeping this residue or not against the res pair limits 
+                if int(atom[5]) < firstRes or int(atom[5]) > secondRes:  
+                    skip = 1
+            
+            #if we are outputting this line then output it. 
+            if skip==0:
+                #write data to file
+                outList.append(outputString)
+
+        writeTextFile(outList, filename)
+    
+    return
+        
+        
+def reThread(infile, newSequence):
+    pdb = readTextFile(infile)
+    
+    # get the atoms
+    atoms = extractAtomsFromPDB(pdb) 
+
+    # extract the back bone    
+    backbone = [ atom for atom in atoms if atom[1] in ['C', 'CA', 'N', 'O']]
+
+    # generate the res names for each backbone atom in the new sequence
+    newBackboneResNames = []
+    for res in newSequence:
+        newBackboneResNames.append(res)
+        newBackboneResNames.append(res)
+        newBackboneResNames.append(res)
+        newBackboneResNames.append(res)
+
+    # replace atom[5] with the new res name for all the atoms in the newResBackBone
+    # renames len(newSequence) residues in the original pdb.
+    for atom, resName in zip(backbone[0:len(newBackboneResNames)], newBackboneResNames):
+        atom[5] = resName
+    
+    # save the pdb with the new atoms:
+    
+
+
+
 #this is hacked to do what I wanted it to do for one occasion and is not generalised
-def symmetrize(forcefield,topologyPreSym,topology):
+def symmetrize(forcefield, topologyPreSym, topology, pathname='~/svn/SCRIPTS/AMBER/symmetrise_prmtop/perm-prmtop.ff03'):
     command=[]
     if 'us' in forcefield:
-       command='/home/cjf41/svn/SCRIPTS/AMBER/symmetrise_prmtop/perm-prmtop.ff03us.py '+topologyPreSym+' '+topology
+        command = pathname + 'us.py ' + topologyPreSym + ' ' + topology
     else:
-       command='/home/cjf41/svn/SCRIPTS/AMBER/symmetrise_prmtop/perm-prmtop.ff03.py '+topologyPreSym+' '+topology
-
+        command = pathname + '.py ' + topologyPreSym + ' ' + topology
     print command
 
     os.system(command)
     return
+
 
 def renameTerminiTop(topology, pdbfile, addLetters):
     print topology
@@ -1470,9 +1781,9 @@ def renameTerminiTop(topology, pdbfile, addLetters):
     print addLetters
 
     if addLetters==1:
-       print 'Adding Ns and Cs to Termini for symmetrization.\n'
+        print 'Adding Ns and Cs to Termini for symmetrization.\n'
     else:
-       print 'Removing Ns and Cs from Termini.\n'
+        print 'Removing Ns and Cs from Termini.\n'
     originalTopology=readTextFile(topology)
     pdbData=readTextFile(pdbfile)
     chainList=findChains(pdbData)
@@ -1500,122 +1811,232 @@ def renameTerminiTop(topology, pdbfile, addLetters):
         #if we encounter the next section of the input file then copy it across
         #and log that we have completed the changes by setting dealtWithIt to 2
         if (foundIt==1)and(dealtWithIt==1):
-           if line[0]=='%':
-              dealtWithIt=2
-              newLine=line
+            if line[0]=='%':
+                dealtWithIt=2
+                newLine=line
   
 
         #if we have found the right part of the file and copied the first two lines
         #but haven't yet dealt with the sequence information then do so.
         if (foundIt==1)and(dealtWithIt==0):
-          dealtWithIt=1
-          #build an outlist of residues in the correct sequence, adding Ns Cs or not as appropriate
-          outList=[]
-          #loop through each chain
-          for chain in chainList:
-             #keep track of where we are in the chain
-             curRes=0
-             #loop through the residues in the chain
-             for residue in chain:
-                #create the output word
-                resWord=residue[1]+' '
-                #if we are in an N or C terminus situation and adding letters then do so.
-                if addLetters==1:
-                   if curRes==0:
-                      resWord='N'+residue[1]
-                   if curRes==len(chain)-1:
-                      resWord='C'+residue[1]
-                #print resWord
-                #add the current word to the list
-                outList.append(resWord)
-                #increment tracker
-                curRes=curRes+1
+            dealtWithIt=1
+            # build an outlist of residues in the correct sequence, adding Ns Cs or not as appropriate
+            outList=[]
+            # loop through each chain
+            for chain in chainList:
+                # keep track of where we are in the chain
+                curRes=0
+                # loop through the residues in the chain
+                for residue in chain:
+                    # create the output word
+                    resWord=residue[1]+' '
+                    # if we are in an N or C terminus situation and adding letters then do so.
+                    if addLetters==1:
+                        if curRes==0:
+                            resWord='N'+residue[1]
+                        if curRes==len(chain)-1:
+                            resWord='C'+residue[1]
+                    # print resWord
+                    # add the current word to the list
+                    outList.append(resWord)
+                    # increment tracker
+                    curRes=curRes+1
 
-          #loop through list of residue words output strings of 20 in 4 char format. 
-          curRes=0
-          l=''
-          for res in outList:
-             l=l+res
-             curRes=curRes+1
+            # loop through list of residue words output strings of 20 in 4 char format. 
+            curRes=0
+            l = ''
+            for res in outList:
+                l = l+res
+                curRes=curRes+1
              
-             if curRes==20:
+            if curRes==20:
                 finalTopology.append(l+'\n')
                 l=''
                 curRes=0
 
-          #if there are unappended residues at end of for loop, output them.
-          if l!='':
-             finalTopology.append(l+'\n')
+            # if there are unappended residues at end of for loop, output them.
+            if l!='':
+                finalTopology.append(l+'\n')
 
-        #if we found the pertinent section on previous loop then copy format statement across
+        # if we found the pertinent section on previous loop then copy format statement across
         if foundIt==2:
-           newLine=line
-           foundIt=foundIt-1
+            newLine=line
+            foundIt=foundIt-1
     
-        #if we have found the pertinent part of the file then set a flag to say so
+        # if we have found the pertinent part of the file then set a flag to say so
         if line[0:19]=='%FLAG RESIDUE_LABEL':
-           newLine=line #copy the current line
-           foundIt=2 #set the flag so on the next loop we copy one more line
+            newLine=line #copy the current line
+            foundIt=2 #set the flag so on the next loop we copy one more line
 
         #if we haven't yet found the pertinent part on previous loops just copy the line across
         if (foundIt==0):
-           newLine=line
+            newLine=line
 
         #if we've dealtwith it and found the next section of the file then just copy the line across.
         if dealtWithIt==2:
-           newLine=line
+            newLine=line
  
         #if we created a line to copy then copy it
         if newLine!=[]:     
-           finalTopology.append(newLine)
+            finalTopology.append(newLine)
 
     #just over write the same file
     writeTextFile(finalTopology,topology)
 
     return
 
-def prepAmberGMin(infile,params):
+def findIndexVal(atoms, atomName, resNum):
+    retVal = -1
+    for atom in atoms:
+        if (atom[1]==atomName) and (atom[5]==resNum):
+            retVal = atom[0]
+            break
+    return retVal
+
+def flipCT(infile, params):
+    
+    # Generic way to flip the cis trans that worked on one occasion is to do two rotations:
+    # the O and C -90 about the N CA axis where the CA is in the same residue as the O and C 
+    # and N and H -90 about the C and CA azis where the CA is in the same residue as the N and H
+    cisTrans = readTextFile(params[0])
+    forcefield = params[1]
+
+    # read the atom information in from the PDB
+    atoms = readAtoms(infile)
+
+    # set up a pointer to the current input file    
+    currentFile = cp.copy(infile)
+    cleanup = []
+    # loop through the lines of input in the cis trans state file
+    for state, atomValStr in zip(cisTrans[1::2], cisTrans[0::2]):
+
+        # only do anything if we encounter a Cis
+        if 'C' in state:
+            # atoms vals are the O C N H index in the PDB of the peptide bond always.
+            atomVals = [ int(aVal) for aVal in atomValStr[0:-1].split() ]
+            
+            # Getthe index of the CA in same residue as the Oxygen (atomVals[0])
+            resValOfTheO = atoms[atomVals[0] - 1][5]
+            CAIndex = findIndexVal(atoms, 'CA', resValOfTheO)
+            
+            # Create atom group to perform first rotation of the O and C about the N CA axis:
+            name = "group_" + str(resValOfTheO) + "_" + str(atomVals[0]) + "_1" 
+            outLine1 = "GROUP " + name + " " + str(atomVals[2]) + " " + str(CAIndex) + " 2 -90\n"
+            outLine2 = str(atomVals[0]) + "\n"
+            outLine3 = str(atomVals[1])
+            
+            # write the atom group file for this first set of atoms
+            writeTextFile([outLine1, outLine2, outLine3], name)
+            
+            # create the next file name
+            nextFile = name + ".pdb"
+            
+            # do the rotation and save the results in nextFile.
+            rotateGroup(currentFile, name, nextFile)
+
+            # make a note of files to clean up
+            cleanup.append(name)
+            cleanup.append(currentFile)
+            
+            # make the new file the current file
+            currentFile = cp.copy(nextFile)
+            
+            # Getthe index of the CA in same residue as the Nitrogen (atomVals[2])
+            resValOfTheN = atoms[atomVals[2] - 1][5]
+            CAIndex = findIndexVal(atoms, 'CA', resValOfTheN)
+            
+            # create the atom group for the second rotation of the N and H about the C CA axis:
+            name = "group_" + str(resValOfTheO) + "_" + str(atomVals[0]) + "_2"
+            outLine1 = "GROUP " + name + " " + str(atomVals[1]) + " " + str(CAIndex) + " 2 -90\n"
+            outLine2 = str(atomVals[2]) + "\n"
+            outLine3 = str(atomVals[3])
+            
+            # write the atom group file for the second set of atoms
+            writeTextFile([outLine1, outLine2, outLine3], name)
+
+            # create the next file name
+            nextFile = name + ".pdb"
+            
+            # do the rotation and save the results in nextFile.
+            rotateGroup(currentFile, name, nextFile)
+            
+            # make a note of files to clean up
+            cleanup.append(name)
+            cleanup.append(currentFile)
+            
+            # make the new file the current file
+            currentFile = cp.copy(nextFile)
+
+    # don't forget the last cheeky file
+    cleanup.append(currentFile)
+            
+    # having performed all the rotations to flip the Cis/trans now PAG the final file with the given force field. 
+    prepAmberGMin(currentFile, ['noreduce', forcefield])
+    
+    for file in cleanup:
+        if file==infile:
+            pass
+        else:
+            if ('leap' not in file):
+                os.system("rm " + file)
+
+
+def prepAmberGMin(infile, params, renameTermini=True):
     
     os.system("pwd")
 
-    rulefile=params[0]
-    forcefield=params[1]
-    fileRoot=fileRootFromInfile(infile)
-    cleanPDB=fileRoot+'_clean.pdb'
-    topologyPreSym=fileRoot+'_preSym.prmtop'
-    topology=fileRoot+'.prmtop'
-    coords=fileRoot+'.inpcrd'
-    outPDB=fileRoot+'_tleap.pdb'
+    rulefile = params[0]
+    forcefield = params[1]
+    fileRoot = fileRootFromInfile(infile)
+    cleanPDB = fileRoot + '_clean.pdb'
+    topologyPreSym = fileRoot + '_preSym.prmtop'
+    topology=fileRoot + '.prmtop'
+    coords=fileRoot + '.inpcrd'
+    outPDB=fileRoot + '_tleap.pdb'
 
     prepFileFlag=0
     paramsFlag=0
 
     #set flags and generate final keywords
     if len(params)>2:
-        prepFile=params[2]
-        prepFileFlag=1
+        prepFile = params[2]
+        prepFileFlag = 1
     if len(params)>3:
-        paramsFile=params[3]
-        paramsFlag=1
+        paramsFile = params[3]
+        paramsFlag = 1
  
-    removeLineList(infile,[rulefile,cleanPDB])
+    print rulefile
+ 
+    if rulefile=='reduce':
+        print "Reducing structure using reduce -Trim from Ambertools."
+        os.system("reduce " + infile + " -Trim > " + cleanPDB)
+    else:
+        if rulefile=='noreduce':
+            print "Not removing or trimming any atoms."
+            os.system("cp " + infile + " " + cleanPDB)
+        else:
+            print "Removing atoms according to specified rule file."
+            removeLineList(infile, [rulefile, cleanPDB])
 
     #generate tleap input script
     vst=open("tleap.in",'w')
-    vst.write("source leaprc."+forcefield+'\n')
+    vst.write("source leaprc." + forcefield + '\n')
     if prepFileFlag:
-        vst.write("loadamberprep "+prepFile+'\n')
+        vst.write("loadamberprep " + prepFile + '\n')
     if paramsFlag:
-        vst.write("loadamberparams "+paramsFile+'\n')
-    vst.write("mol=loadpdb "+cleanPDB+'\n')
-    vst.write("saveamberparm mol "+topologyPreSym+" "+coords+'\n')
-    vst.write("savepdb mol "+outPDB+'\n')
-    vst.write("quit"+'\n')
+        vst.write("loadamberparams " + paramsFile + '\n')
+    vst.write("mol=loadpdb " + cleanPDB + '\n')
+    vst.write("saveamberparm mol " + topologyPreSym + " " + coords + '\n')
+    vst.write("savepdb mol " + outPDB + '\n')
+    vst.write("quit" + '\n')
     vst.close()
     os.system("tleap -f tleap.in")
-    renameTerminiTop(topologyPreSym, outPDB, 1)
-    symmetrize(forcefield,topologyPreSym,topology)
-    renameTerminiTop(topology, outPDB, 0)
+    if renameTermini:
+        renameTerminiTop(topologyPreSym, outPDB, 1)
+        symmetrize(forcefield,topologyPreSym,topology)
+        renameTerminiTop(topology, outPDB, 0)
+    else:
+        symmetrize(forcefield,topologyPreSym,topology)
     os.system("rm tleap.in")
     os.system("rm "+topologyPreSym)
     os.system("rm "+cleanPDB)
@@ -1626,7 +2047,7 @@ def prepAmberGMin(infile,params):
 
     return
 
-def renumberResidues(infile,startNum, outfile):
+def renumberResidues(infile, startNum, outfile):
 
     #open input file
     fI=open(infile,'r')
@@ -1753,7 +2174,7 @@ def sortResidues(infile,sortfile,outfile):
   
         #check for keywords in the sort file
         if sortRes in ['CHAIN','TER', '']:
-            #if it's the start of a new chain then increment the chain letter
+            # if it's the start of a new chain then increment the chain letter
             if sortRes=='CHAIN':
                 curChainIndex=curChainIndex+1
                 curChain=chains[curChainIndex]
@@ -1764,9 +2185,6 @@ def sortResidues(infile,sortfile,outfile):
                 l='TER  {: >06d}      {:3} {:1}{: >4d}\n'.format(curAtom, resName, curChain, curRes)
                 fO.write(l)
                
-            if sortRes=='':
-                #do nothing
-                1==1
         else:
             #otherwise sortRes is the residue in the input data file. Increment the curRes (initialised to zero)
             curRes=curRes+1
@@ -1843,6 +2261,54 @@ def proToHyp(infile,convFile,outFile):
 
     return
 
+def convertSequence(infile, outfile):
+    singleLetterSequence = readTextFile(infile)
+    print singleLetterSequence
+    outSequence = []
+    for letter in singleLetterSequence[0]:
+        if letter=='A':
+            outSequence.append('ALA\n')
+        if letter=='R':
+            outSequence.append('ARG\n')
+        if letter=='N':
+            outSequence.append('ASN\n')
+        if letter=='D':
+            outSequence.append('ASP\n')
+        if letter=='C':
+            outSequence.append('CYS\n')
+        if letter=='Q':
+            outSequence.append('GLN\n')
+        if letter=='G':
+            outSequence.append('GLY\n')
+        if letter=='E':
+            outSequence.append('GLU\n')
+        if letter=='H':
+            outSequence.append('HIS\n')
+        if letter=='I':
+            outSequence.append('ILE\n')
+        if letter=='L':
+            outSequence.append('LEU\n')
+        if letter=='K':
+            outSequence.append('LYS\n')
+        if letter=='M':
+            outSequence.append('MET\n')
+        if letter=='F':
+            outSequence.append('PHE\n')
+        if letter=='P':
+            outSequence.append('PRO\n')
+        if letter=='S':
+            outSequence.append('SER\n')
+        if letter=='T':
+            outSequence.append('THR\n')
+        if letter=='W':
+            outSequence.append('TRP\n')
+        if letter=='Y':
+            outSequence.append('TYR\n')
+        if letter=='V':
+            outSequence.append('VAL\n')
+    writeTextFile(outSequence, outfile)
+        
+
 def readSequence(infile,mode,outfile):
     atoms=readAtoms(infile)
     residues=findResidues(atoms)
@@ -1888,7 +2354,7 @@ def readSequence(infile,mode,outfile):
         writeTextFile(l,outfile)
     return
     
-def modifySequence(infile,newSequence,startResidue,outFile):
+def modifySequence(infile, newSequence, startResidue, outFile):
     
     rawData=readTextFile(infile)
     atoms=readAtoms(infile)
@@ -1927,7 +2393,7 @@ def modifySequence(infile,newSequence,startResidue,outFile):
     for line in rawData:
         #split the current line into tokens
         tokens=line.split()
-
+        
         #if we encounter an atom line then decide if we need to modify it or ignore it.
         if tokens[0] in ['ATOM','HETATM']:
   
@@ -1996,7 +2462,7 @@ def modifySequence(infile,newSequence,startResidue,outFile):
                 curAtomOutputIndex+=1
         else:
             if tokens[0] in ['TER']:
-                l='TER  {: >06d}      {:3} {:1}{: >4d}\n'.format(curAtomOutputIndex, lastResName, tokens[3], int(tokens[4]))
+                l='TER' #  {: >06d}      {:3} {:1}{: >4d}\n'.format(curAtomOutputIndex, lastResName, tokens[3], int(tokens[4]))
                 fO.write(l)
                 curAtomOutputIndex+=1       
             else:
@@ -2074,8 +2540,8 @@ def puckerGroups(infile,OHFlag, outfile):
 
     print 'OHFlag: ',OHFlag
 
-    rawData=readTextFile(infile)
-    atoms=readAtoms(infile)
+    #rawData = readTextFile(infile)
+    atoms = readAtoms(infile)
  
     #open the outputfile
     fO=open(outfile,'w')
@@ -2105,19 +2571,19 @@ def puckerGroups(infile,OHFlag, outfile):
             for atom in atomList:
                 #CD to CB determines the axis of rotation
                 if atom[1] in ['CD','CB']:
-                   axisAtoms.append(int(atom[0]))
+                    axisAtoms.append(int(atom[0]))
                 if atom[1] in ['CG','OD1']:
-                   axisAtomsOH.append(int(atom[0]))
+                    axisAtomsOH.append(int(atom[0]))
                 if atom[1] in ['HD2','HD3','CG','HG2','HG3','HB2','HB3','OD1','HO1']:
-                   groupAtoms.append(int(atom[0]))
+                    groupAtoms.append(int(atom[0]))
                 if atom[1] in ['HO1']:
-                   groupAtomsOH.append(int(atom[0]))
+                    groupAtomsOH.append(int(atom[0]))
         
             #write the next line of the output file
             fO.write('GROUP '+name+' '+str(axisAtoms[0])+' '+str(axisAtoms[1])+' '+str(len(groupAtoms))+' 1.0 1.0\n')
             #output the atoms numbers
             for atom in groupAtoms:
-               fO.write(str(atom)+'\n')
+                fO.write(str(atom)+'\n')
 
             #output the OH group rotation if in a HYP and OHFlag is set
             if (OHFlag==str(1)) and (res[1]=='HYP'):
@@ -2125,7 +2591,7 @@ def puckerGroups(infile,OHFlag, outfile):
                 fO.write('GROUP '+nameOH+' '+str(axisAtomsOH[0])+' '+str(axisAtomsOH[1])+' '+str(len(groupAtomsOH))+' 1.0 1.0\n')
                 #output the atoms numbers
                 for atom in groupAtomsOH:
-                   fO.write(str(atom)+'\n')
+                    fO.write(str(atom)+'\n')
 
     fO1.close()
     fO.close()
@@ -2133,7 +2599,7 @@ def puckerGroups(infile,OHFlag, outfile):
 
 def puckerGroupSpec(infile, resfile, OHFlag, scaleFac, rotProb, outfile):
    
-    rawData=readTextFile(infile)
+    #rawData=readTextFile(infile)
     resList=readTextFile(resfile)
     atoms=readAtoms(infile)
 
@@ -2162,13 +2628,13 @@ def puckerGroupSpec(infile, resfile, OHFlag, scaleFac, rotProb, outfile):
             #loop throught list of atoms in the residue extracting the appropriate values
             for atom in atomList:
                 if atom[1] in ['CD','CB']:
-                   axisAtoms.append(int(atom[0]))
+                    axisAtoms.append(int(atom[0]))
                 if atom[1] in ['CG','OD1']:
-                   axisAtomsOH.append(int(atom[0]))
+                    axisAtomsOH.append(int(atom[0]))
                 if atom[1] in ['HD2','HD3','CG','HG2','HG3','HB2','HB3','OD1','HO1']:
-                   groupAtoms.append(int(atom[0]))
+                    groupAtoms.append(int(atom[0]))
                 if atom[1] in ['HO1']:
-                   groupAtomsOH.append(int(atom[0]))
+                    groupAtomsOH.append(int(atom[0]))
 
            
             #write the next line of the output file
@@ -2176,7 +2642,7 @@ def puckerGroupSpec(infile, resfile, OHFlag, scaleFac, rotProb, outfile):
     
             #output the atoms numbers
             for atom in groupAtoms:
-               fO.write(str(atom)+'\n')
+                fO.write(str(atom)+'\n')
 
             #output the OH group rotation if in a HYP and OHFlag is set
             if (int(OHFlag)==1) and (resName=='HYP'):
@@ -2184,7 +2650,7 @@ def puckerGroupSpec(infile, resfile, OHFlag, scaleFac, rotProb, outfile):
                 fO.write('GROUP '+nameOH+' '+str(axisAtomsOH[0])+' '+str(axisAtomsOH[1])+' '+str(len(groupAtomsOH))+' 1.0 '+str(rotProb)+'\n')
                 #output the atoms numbers
                 for atom in groupAtomsOH:
-                   fO.write(str(atom)+'\n')
+                    fO.write(str(atom)+'\n')
 
         else:
             print 'residue is not HYP or PRO.'
@@ -2204,14 +2670,14 @@ def cpoa(p1List,p2List,p3List,p4List):
     pb - the vector on the line p4-p3 which is at the point of closest approach
     mub - distance from p1 to pb.'''
     p13List=[p1-p3 for p1,p3 in zip(p1List,p3List)]
-    p43List=[(p4-p3)/linalg.norm(p4-p3) for p4,p3 in zip(p4List,p3List)]
+    p43List=[(p4-p3)/np.linalg.norm(p4-p3) for p4,p3 in zip(p4List,p3List)]
     p21List=[(p2-p1)/linalg.norm(p2-p1) for p2,p1 in zip(p2List,p1List)]
     
-    d1343List=[dot(p13,p43) for p13,p43 in zip(p13List,p43List)]
-    d4321List=[dot(p43,p21) for p43,p21 in zip(p43List,p21List)]
-    d1321List=[dot(p13,p21) for p13,p21 in zip(p13List,p21List)]
-    d4343List=[dot(p43,p43) for p43 in p43List]
-    d2121List=[dot(p21,p21) for p21 in p21List]
+    d1343List=[np.dot(p13,p43) for p13,p43 in zip(p13List,p43List)]
+    d4321List=[np.dot(p43,p21) for p43,p21 in zip(p43List,p21List)]
+    d1321List=[np.dot(p13,p21) for p13,p21 in zip(p13List,p21List)]
+    d4343List=[np.dot(p43,p43) for p43 in p43List]
+    d2121List=[np.dot(p21,p21) for p21 in p21List]
 
     denomList=[(d2121*d4343) - (d4321 * d4321) for d2121,d4343,d4321 in zip(d2121List,d4343List,d4321List)]
     numerList=[(d1343*d4321) - (d1321 * d4343) for d1343,d4321,d1321,d4343 in zip(d1343List,d4321List,d1321List,d4343List)]
@@ -2241,8 +2707,8 @@ def cpoa(p1List,p2List,p3List,p4List):
 
 def plotVectors(fig,listA,listB,listCol,blockFlag):
     '''Function plots an arrow between each vector in list a and each corresponding vector in list b'''
-    maxVals=amax(listA+listB,0)
-    minVals=amin(listA+listB,0)
+    maxVals=np.amax(listA+listB,0)
+    minVals=np.amin(listA+listB,0)
 
     #draw a new axis if required
     axList=fig.get_axes()
@@ -2270,9 +2736,9 @@ def plotVectors(fig,listA,listB,listCol,blockFlag):
 def atomsToCOM(atoms):
     '''sets an atoms array to its centre of mass. Returns the COM and the new array'''
     newAtoms=[]
-    COM=array([0.0,0.0,0.0])
+    COM=np.array([0.0,0.0,0.0])
     for atom in atoms:
-        COM+=array([atom[7],atom[8],atom[9]])
+        COM+=np.array([atom[7],atom[8],atom[9]])
     COM/=len(atoms)
     for atom in atoms:
         newAtom=[item for item in atom]
@@ -2304,7 +2770,7 @@ def readResidueSymmetry(atoms):
     CAYList=[]    
     
     #first move the atoms to the COM frame. Do everything there.
-    [COM,newAtoms]=atomsToCOM(atoms)
+    [COM, newAtoms] = atomsToCOM(atoms)
     
     #identify the chains in the atoms
     chains=breakAtomsInToChains(newAtoms)
@@ -2338,7 +2804,7 @@ def readResidueSymmetry(atoms):
             #extract arrays of atoms of interest
             for atom in curRes:
                 if atom[1] in ['N','C','CA']:
-                    atomicCoords.append(array([atom[7],atom[8],atom[9]]))  
+                    atomicCoords.append(np.array([atom[7],atom[8],atom[9]]))  
 
 
         #Ignore first GXY repeat. Include the last one. get the Ca from gly, pro and hyp residues.
@@ -2347,13 +2813,13 @@ def readResidueSymmetry(atoms):
             for atom in curRes:
                 if atom[1] in ['CA']:
                     if GXY in ['G']:
-                        CAG.append(array([atom[7],atom[8],atom[9]]))
+                        CAG.append(np.array([atom[7],atom[8],atom[9]]))
                         ResG.append(atom[5])
                     if GXY in ['X']:
-                        CAX.append(array([atom[7],atom[8],atom[9]]))
+                        CAX.append(np.array([atom[7],atom[8],atom[9]]))
                         ResX.append(atom[5])
                     if GXY in ['Y']:
-                        CAY.append(array([atom[7],atom[8],atom[9]]))
+                        CAY.append(np.array([atom[7],atom[8],atom[9]]))
                         ResY.append(atom[5])
                         
         #remember each chain of atomic coords separately
@@ -2366,18 +2832,18 @@ def readResidueSymmetry(atoms):
         CAYList.append(CAY)
 
     #Take the mean of the first atom in each chain to be the base of the helix
-    basePoint3Space=mean([AllAtomList[0][0],AllAtomList[1][0],AllAtomList[2][0]],0)
+    basePoint3Space=mp.mean([AllAtomList[0][0],AllAtomList[1][0],AllAtomList[2][0]],0)
 
     #Take the radius guess as the average of the distances from the basePoint3Space to the start of each chain
-    radiusGuess=mean([linalg.norm(AllAtomList[0][0]-basePoint3Space),linalg.norm(AllAtomList[1][0]-basePoint3Space),linalg.norm(AllAtomList[2][0]-basePoint3Space)])
+    radiusGuess=np.mean([np.linalg.norm(AllAtomList[0][0]-basePoint3Space),np.linalg.norm(AllAtomList[1][0]-basePoint3Space),np.linalg.norm(AllAtomList[2][0]-basePoint3Space)])
 
     #Take an initial guess at the axis as the vector between basepoint and the centre of mass: COM=([0,0,0])
-    zVecGuess=(array([0.0,0.0,0.0])-basePoint3Space)/linalg.norm(basePoint3Space) 
+    zVecGuess=(np.array([0.0,0.0,0.0])-basePoint3Space)/np.linalg.norm(basePoint3Space) 
 
     #compute point at z=0 for line through basepoint in direction of zVecGuess. The length of the cylinder is irrelevant. Thus we can use the point where the axis crosses the yx plane to define the base point.
     #This eliminates another parameter for this fit. Only a problem if the z-axis is parallel to the xy plane. we'll cross that bridge when it turns up. 
     #basePoint2Space=array([-1.0*ZVecMeanNorm[0]*basePoint3Space[2]/ZVecMeanNorm[2]+basePoint3Space[0],-1.0*ZVecMeanNorm[1]*basePoint3Space[2]/ZVecMeanNorm[2]+basePoint3Space[1],0])
-    basePoint2Space=array([-1.0*zVecGuess[0]*basePoint3Space[2]/zVecGuess[2]+basePoint3Space[0],-1.0*zVecGuess[1]*basePoint3Space[2]/zVecGuess[2]+basePoint3Space[1],0])
+    basePoint2Space=np.array([-1.0*zVecGuess[0]*basePoint3Space[2]/zVecGuess[2]+basePoint3Space[0],-1.0*zVecGuess[1]*basePoint3Space[2]/zVecGuess[2]+basePoint3Space[1],0])
     
     #compute the polar coords of the Z-vector - only need the orientation as this is always a normal vector - reduces params by one.
     #ignore rZHat
@@ -2390,30 +2856,30 @@ def readResidueSymmetry(atoms):
     AllAtomsListFlat=[item for sublist in AllAtomList for item in sublist]
 
     #find the overall range of the data vectors
-    maxVals=amax(AllAtomsListFlat,0)
-    minVals=amin(AllAtomsListFlat,0)
+    maxVals=np.amax(AllAtomsListFlat,0)
+    minVals=np.amin(AllAtomsListFlat,0)
     
     #the radius ought not to be larger than half the longest possible distance within the cloud of data and must be greater than 0. whacked in a 20 because collagen is long and thin and fitting was being silly.
-    radiusRange=linalg.norm(maxVals-minVals)/10
+    radiusRange=np.linalg.norm(maxVals-minVals)/10
     
     #The base point parameter on the xy plane should not move more than radiusRange in any direction from the initial basepoint guess 
     
     #Set the bounds; the phi and theta bounds are set to be a more than pi to allow wrap arounds. It tended to get stuck at pi and not know that it could move beyond... seems to work...
     #If the gradient is going up when a parameter hits the boundary it stays there. If it can go past the boundary and the gradient becomes -ve it jumps away from the boundary...
-    bounds=[(0,radiusRange),(0,2*pi),(-2*pi,2*pi),(basePoint2Space[0]-radiusRange,basePoint2Space[0]+radiusRange),(basePoint2Space[1]-radiusRange,basePoint2Space[1]+radiusRange)]
+    bounds=[(0,radiusRange),(0,2*np.pi),(-2*np.pi,2*np.pi),(basePoint2Space[0]-radiusRange,basePoint2Space[0]+radiusRange),(basePoint2Space[1]-radiusRange,basePoint2Space[1]+radiusRange)]
     
     #create a function pointer - [] is for plotting out stuff on the fly to monitor progress if desired
-    f=(lambda x: radialDistanceProjectionSum(x,AllAtomsListFlat,[]))
+    f=(lambda x: radialDistanceProjectionSum(x, AllAtomsListFlat, []))
     
     #minimise the RadialDistanceProjection sum starting with the initial guess
-    finalFit=fmin_l_bfgs_b(f, InitialGuess, approx_grad=True, bounds=bounds, factr=10, epsilon=1e-10, maxfun=1000, disp=0)
+    finalFit = fmin_l_bfgs_b(f, InitialGuess, approx_grad=True, bounds=bounds, factr=10, epsilon=1e-10, maxfun=1000, disp=0)
     #print 'initial Z Vector Guess: ', zVecGuess
     #print 'Initial params guess (radius,theta,phi,basePointX,basePointY): ', InitialGuess
     #print 'Final params and errors:', finalFit
     
     #construct the final vectors for the helix axis.
     zFinal=ThreeDPolarToXYZ(1.0,float(finalFit[0][1]),float(finalFit[0][2]))
-    basePointFinal=array([finalFit[0][3],finalFit[0][4],0])
+    basePointFinal=np.array([finalFit[0][3],finalFit[0][4],0])
 
     #Now we have the z-axis vector and a defined point on the axis we can compute interesting things
 
@@ -2440,9 +2906,9 @@ def readResidueSymmetry(atoms):
         basePointCoordsCAY= [point-basePointFinal for point in CAY]
         
         #project the data onto the zAxis
-        zComponentsCAG=[dot(point,zFinal) for point in basePointCoordsCAG]
-        zComponentsCAX=[dot(point,zFinal) for point in basePointCoordsCAX]
-        zComponentsCAY=[dot(point,zFinal) for point in basePointCoordsCAY]
+        zComponentsCAG=[np.dot(point,zFinal) for point in basePointCoordsCAG]
+        zComponentsCAX=[np.dot(point,zFinal) for point in basePointCoordsCAX]
+        zComponentsCAY=[np.dot(point,zFinal) for point in basePointCoordsCAY]
         
         #project the point onto the base plane
         basePlaneVectorCAG=[ point - zComp*zFinal for point, zComp in zip(basePointCoordsCAG,zComponentsCAG)]        
@@ -2450,9 +2916,9 @@ def readResidueSymmetry(atoms):
         basePlaneVectorCAY=[ point - zComp*zFinal for point, zComp in zip(basePointCoordsCAY,zComponentsCAY)]        
         
         #Theta is the angle between each adjacent base plane Vectors in the same strand; return in degrees
-        ThetaCAG.append([arccos(dot(bPlaneVec/linalg.norm(bPlaneVec),basePlaneVectorCAG[bvCurIndex+1]/linalg.norm(basePlaneVectorCAG[bvCurIndex+1])))*180.0/pi for bvCurIndex, bPlaneVec in enumerate(basePlaneVectorCAG[:-1])])
-        ThetaCAX.append([arccos(dot(bPlaneVec/linalg.norm(bPlaneVec),basePlaneVectorCAX[bvCurIndex+1]/linalg.norm(basePlaneVectorCAX[bvCurIndex+1])))*180.0/pi for bvCurIndex, bPlaneVec in enumerate(basePlaneVectorCAX[:-1])])        
-        ThetaCAY.append([arccos(dot(bPlaneVec/linalg.norm(bPlaneVec),basePlaneVectorCAY[bvCurIndex+1]/linalg.norm(basePlaneVectorCAY[bvCurIndex+1])))*180.0/pi for bvCurIndex, bPlaneVec in enumerate(basePlaneVectorCAY[:-1])])        
+        ThetaCAG.append([np.arccos(np.dot(bPlaneVec/np.linalg.norm(bPlaneVec),basePlaneVectorCAG[bvCurIndex+1]/np.linalg.norm(basePlaneVectorCAG[bvCurIndex+1])))*180.0/np.pi for bvCurIndex, bPlaneVec in enumerate(basePlaneVectorCAG[:-1])])
+        ThetaCAX.append([np.arccos(np.dot(bPlaneVec/np.linalg.norm(bPlaneVec),basePlaneVectorCAX[bvCurIndex+1]/np.linalg.norm(basePlaneVectorCAX[bvCurIndex+1])))*180.0/np.pi for bvCurIndex, bPlaneVec in enumerate(basePlaneVectorCAX[:-1])])        
+        ThetaCAY.append([np.arccos(np.dot(bPlaneVec/np.linalg.norm(bPlaneVec),basePlaneVectorCAY[bvCurIndex+1]/np.linalg.norm(basePlaneVectorCAY[bvCurIndex+1])))*180.0/np.pi for bvCurIndex, bPlaneVec in enumerate(basePlaneVectorCAY[:-1])])        
 
         #Vertical displacement between units is the difference between each ZComponent
         DMagsCAG.append([abs(zComponentsCAG[zCurIndex+1]-curZ) for zCurIndex, curZ in enumerate(zComponentsCAG[:-1])])
@@ -2460,9 +2926,9 @@ def readResidueSymmetry(atoms):
         DMagsCAY.append([abs(zComponentsCAY[zCurIndex+1]-curZ) for zCurIndex, curZ in enumerate(zComponentsCAY[:-1])])        
         
         #Radius of the different CAlphas given by magnitude of the basePlaneVectors
-        RadiusCAG.append([linalg.norm(bpvCAG) for bpvCAG in basePlaneVectorCAG])
-        RadiusCAX.append([linalg.norm(bpvCAX) for bpvCAX in basePlaneVectorCAX])
-        RadiusCAY.append([linalg.norm(bpvCAY) for bpvCAY in basePlaneVectorCAY])
+        RadiusCAG.append([np.linalg.norm(bpvCAG) for bpvCAG in basePlaneVectorCAG])
+        RadiusCAX.append([np.linalg.norm(bpvCAX) for bpvCAX in basePlaneVectorCAX])
+        RadiusCAY.append([np.linalg.norm(bpvCAY) for bpvCAY in basePlaneVectorCAY])
         
     #collapse the outermost chain structure for all the output arrays
     ResG=[item for sublist in ResGList for item in sublist]
@@ -2507,7 +2973,7 @@ def readUnitSymmetry(atoms):
     outputResiduesList=[]
     
     #first move the atoms to the COM frame. Do everything there.
-    [COM,newAtoms]=atomsToCOM(atoms)
+    [COM, newAtoms]=atomsToCOM(atoms)
     
     #identify the chains in the atoms
     chains=breakAtomsInToChains(newAtoms)
@@ -2542,7 +3008,7 @@ def readUnitSymmetry(atoms):
             #extract arrays of atoms of interest
             for atom in curRes:
                 if (atom[1] in ['N']) and (GXY in ['G']):
-                    NG.append(array([atom[7],atom[8],atom[9]]))                    
+                    NG.append(np.array([atom[7],atom[8],atom[9]]))                    
 
         #Ignore capRes residues at either end of the array
         for curRes, GXY in zip(residues[capRes:-capRes:1],GXYInfo[capRes:-capRes:1]):
@@ -2558,14 +3024,14 @@ def readUnitSymmetry(atoms):
             #extract arrays of atoms of interest
             for atom in curRes:
                 if atom[1] in ['N','C','CA']:
-                    atomicCoords.append(array([atom[7],atom[8],atom[9]]))  
+                    atomicCoords.append(np.array([atom[7],atom[8],atom[9]]))  
                 if atom[1] in ['CA']:
                     if GXY in ['G']:
-                        CAG.append(array([atom[7],atom[8],atom[9]]))
+                        CAG.append(np.array([atom[7],atom[8],atom[9]]))
                     if GXY in ['X']:
-                        CAX.append(array([atom[7],atom[8],atom[9]]))
+                        CAX.append(np.array([atom[7],atom[8],atom[9]]))
                     if GXY in ['Y']:
-                        CAY.append(array([atom[7],atom[8],atom[9]]))
+                        CAY.append(np.array([atom[7],atom[8],atom[9]]))
                         
         #remember each chain of atomic coords separately
         AllAtomList.append(atomicCoords)
@@ -2575,18 +3041,18 @@ def readUnitSymmetry(atoms):
         CAYList.append(CAY)
 
     #Take the mean of the first atom in each chain to be the base of the helix
-    basePoint3Space=mean([AllAtomList[0][0],AllAtomList[1][0],AllAtomList[2][0]],0)
+    basePoint3Space=np.mean([AllAtomList[0][0],AllAtomList[1][0],AllAtomList[2][0]],0)
 
     #Take the radius guess as the average of the distances from the basePoint3Space to the start of each chain
-    radiusGuess=mean([linalg.norm(AllAtomList[0][0]-basePoint3Space),linalg.norm(AllAtomList[1][0]-basePoint3Space),linalg.norm(AllAtomList[2][0]-basePoint3Space)])
+    radiusGuess=np.mean([np.linalg.norm(AllAtomList[0][0]-basePoint3Space),np.linalg.norm(AllAtomList[1][0]-basePoint3Space),np.linalg.norm(AllAtomList[2][0]-basePoint3Space)])
 
     #Take an initial guess at the axis as the vector between basepoint and the centre of mass: COM=([0,0,0])
-    zVecGuess=(array([0.0,0.0,0.0])-basePoint3Space)/linalg.norm(basePoint3Space) 
+    zVecGuess=(np.array([0.0,0.0,0.0])-basePoint3Space)/np.linalg.norm(basePoint3Space) 
 
     #compute point at z=0 for line through basepoint in direction of zVecGuess. The length of the cylinder is irrelevant. Thus we can use the point where the axis crosses the yx plane to define the base point.
     #This eliminates another parameter for this fit. Only a problem if the z-axis is parallel to the xy plane. we'll cross that bridge when it turns up. 
     #basePoint2Space=array([-1.0*ZVecMeanNorm[0]*basePoint3Space[2]/ZVecMeanNorm[2]+basePoint3Space[0],-1.0*ZVecMeanNorm[1]*basePoint3Space[2]/ZVecMeanNorm[2]+basePoint3Space[1],0])
-    basePoint2Space=array([-1.0*zVecGuess[0]*basePoint3Space[2]/zVecGuess[2]+basePoint3Space[0],-1.0*zVecGuess[1]*basePoint3Space[2]/zVecGuess[2]+basePoint3Space[1],0])
+    basePoint2Space=np.array([-1.0*zVecGuess[0]*basePoint3Space[2]/zVecGuess[2]+basePoint3Space[0],-1.0*zVecGuess[1]*basePoint3Space[2]/zVecGuess[2]+basePoint3Space[1],0])
     
     #compute the polar coords of the Z-vector - only need the orientation as this is always a normal vector - reduces params by one.
     #ignore rZHat
@@ -2599,17 +3065,17 @@ def readUnitSymmetry(atoms):
     AllAtomsListFlat=[item for sublist in AllAtomList for item in sublist]
 
     #find the overall range of the data vectors
-    maxVals=amax(AllAtomsListFlat,0)
-    minVals=amin(AllAtomsListFlat,0)
+    maxVals=np.amax(AllAtomsListFlat,0)
+    minVals=np.amin(AllAtomsListFlat,0)
     
     #the radius ought not to be larger than half the longest possible distance within the cloud of data and must be greater than 0. whacked in a 20 because collagen is long and thin and fitting was being silly.
-    radiusRange=linalg.norm(maxVals-minVals)/10
+    radiusRange=np.linalg.norm(maxVals-minVals)/10
     
     #The base point parameter on the xy plane should not move more than radiusRange in any direction from the initial basepoint guess 
     
     #Set the bounds; the phi and theta bounds are set to be a more than pi to allow wrap arounds. It tended to get stuck at pi and not know that it could move beyond... seems to work...
     #If the gradient is going up when a parameter hits the boundary it stays there. If it can go past the boundary and the gradient becomes -ve it jumps away from the boundary...
-    bounds=[(0,radiusRange),(0,2*pi),(-2*pi,2*pi),(basePoint2Space[0]-radiusRange,basePoint2Space[0]+radiusRange),(basePoint2Space[1]-radiusRange,basePoint2Space[1]+radiusRange)]
+    bounds=[(0,radiusRange),(0,2*np.pi),(-2*np.pi,2*np.pi),(basePoint2Space[0]-radiusRange,basePoint2Space[0]+radiusRange),(basePoint2Space[1]-radiusRange,basePoint2Space[1]+radiusRange)]
     
     #create a function pointer - [] is for plotting out stuff on the fly to monitor progress if desired
     f=(lambda x: radialDistanceProjectionSum(x,AllAtomsListFlat,[]))
@@ -2622,7 +3088,7 @@ def readUnitSymmetry(atoms):
     
     #construct the final vectors for the helix axis.
     zFinal=ThreeDPolarToXYZ(1.0,float(finalFit[0][1]),float(finalFit[0][2]))
-    basePointFinal=array([finalFit[0][3],finalFit[0][4],0])
+    basePointFinal=np.array([finalFit[0][3],finalFit[0][4],0])
 
     #Now we have the z-axis vector and a defined point on the axis we can compute interesting things
 
@@ -2641,11 +3107,11 @@ def readUnitSymmetry(atoms):
         #compute position of each point relative to final basePoint
         basePointCoordsNG= [point-basePointFinal for point in NG]
         #project the data onto the zAxis
-        zComponentsNG=[dot(point,zFinal) for point in basePointCoordsNG]
+        zComponentsNG=[np.dot(point,zFinal) for point in basePointCoordsNG]
         #project the point onto the base plane
         basePlaneVectorNG=[ point - zComp*zFinal for point, zComp in zip(basePointCoordsNG,zComponentsNG)]        
         #Theta is the angle between each adjacent base plane Vectors in the same strand; return in degrees
-        Theta.append([arccos(dot(bPlaneVec/linalg.norm(bPlaneVec),basePlaneVectorNG[bvCurIndex+1]/linalg.norm(basePlaneVectorNG[bvCurIndex+1])))*180.0/pi for bvCurIndex, bPlaneVec in enumerate(basePlaneVectorNG[:-1])])
+        Theta.append([np.arccos(np.dot(bPlaneVec/np.linalg.norm(bPlaneVec),basePlaneVectorNG[bvCurIndex+1]/np.linalg.norm(basePlaneVectorNG[bvCurIndex+1])))*180.0/np.pi for bvCurIndex, bPlaneVec in enumerate(basePlaneVectorNG[:-1])])
         #Vertical displacement between units is the difference between each ZComponent
         DMags.append([abs(zComponentsNG[zCurIndex+1]-curZ) for zCurIndex, curZ in enumerate(zComponentsNG[:-1])])
 
@@ -2656,17 +3122,17 @@ def readUnitSymmetry(atoms):
         basePointCoordsCAX= [point-basePointFinal for point in CAX]
         basePointCoordsCAY= [point-basePointFinal for point in CAY]
         #project the data onto the zAxis
-        zComponentsCAG=[dot(point,zFinal) for point in basePointCoordsCAG]
-        zComponentsCAX=[dot(point,zFinal) for point in basePointCoordsCAX]
-        zComponentsCAY=[dot(point,zFinal) for point in basePointCoordsCAY]
+        zComponentsCAG=[np.dot(point,zFinal) for point in basePointCoordsCAG]
+        zComponentsCAX=[np.dot(point,zFinal) for point in basePointCoordsCAX]
+        zComponentsCAY=[np.dot(point,zFinal) for point in basePointCoordsCAY]
         #project the point onto the base plane
         basePlaneVectorCAG=[ point - zComp*zFinal for point, zComp in zip(basePointCoordsCAG,zComponentsCAG)]
         basePlaneVectorCAX=[ point - zComp*zFinal for point, zComp in zip(basePointCoordsCAX,zComponentsCAX)]
         basePlaneVectorCAY=[ point - zComp*zFinal for point, zComp in zip(basePointCoordsCAY,zComponentsCAY)]
         #Radius of the different CAlphas given by magnitude of the basePlaneVectors
-        RadiusCAG.append([linalg.norm(bpvCAG) for bpvCAG in basePlaneVectorCAG])
-        RadiusCAX.append([linalg.norm(bpvCAX) for bpvCAX in basePlaneVectorCAX])
-        RadiusCAY.append([linalg.norm(bpvCAY) for bpvCAY in basePlaneVectorCAY])
+        RadiusCAG.append([np.linalg.norm(bpvCAG) for bpvCAG in basePlaneVectorCAG])
+        RadiusCAX.append([np.linalg.norm(bpvCAX) for bpvCAX in basePlaneVectorCAX])
+        RadiusCAY.append([np.linalg.norm(bpvCAY) for bpvCAY in basePlaneVectorCAY])
         
     #collapse the outermost chain structure for all the output arrays
     Theta=[item for sublist in Theta for item in sublist]
@@ -2744,20 +3210,20 @@ def readSymmetryFromAtoms(atoms,capRes,plotFig):
             for curRes in residues[0::1]:
                 for atom in curRes:
                     if atom[1] in ['N','C','CA']:
-                        atomicCoords.append(array([atom[7],atom[8],atom[9]]))
+                        atomicCoords.append(np.array([atom[7],atom[8],atom[9]]))
                     if atom[3] in ['GLY']:
                         if atom[1] in ['CA']:
-                            CAlphaGly.append(array([atom[7],atom[8],atom[9]]))
+                            CAlphaGly.append(np.array([atom[7],atom[8],atom[9]]))
                           
         else:
             #if capRes is non-zero then ignore capRes residues at either end of the array
             for curRes in residues[capRes:-capRes:1]:
                 for atom in curRes:
                     if atom[1] in ['N','C','CA']:
-                        atomicCoords.append(array([atom[7],atom[8],atom[9]]))  
+                        atomicCoords.append(np.array([atom[7],atom[8],atom[9]]))  
                     if atom[3] in ['GLY']:
                         if atom[1] in ['CA']:
-                            CAlphaGly.append(array([atom[7],atom[8],atom[9]]))
+                            CAlphaGly.append(np.array([atom[7],atom[8],atom[9]]))
 
         #remember each chain of atomic coords separately
         AllAtomList.append(atomicCoords)
@@ -2831,18 +3297,18 @@ def readSymmetryFromAtoms(atoms,capRes,plotFig):
     #rhoMean=mean([item for sublist in rhoList for item in sublist])
 
     #Take the mean of the first atom in each chain to be the base of the helix
-    basePoint3Space=mean([AllAtomList[0][0],AllAtomList[1][0],AllAtomList[2][0]],0)
+    basePoint3Space=np.mean([AllAtomList[0][0],AllAtomList[1][0],AllAtomList[2][0]],0)
 
     #Take the radius guess as the average of the distances from the basePoint3Space to the start of each chain
-    radiusGuess=mean([linalg.norm(AllAtomList[0][0]-basePoint3Space),linalg.norm(AllAtomList[1][0]-basePoint3Space),linalg.norm(AllAtomList[2][0]-basePoint3Space)])
+    radiusGuess=np.mean([np.linalg.norm(AllAtomList[0][0]-basePoint3Space),np.linalg.norm(AllAtomList[1][0]-basePoint3Space),np.linalg.norm(AllAtomList[2][0]-basePoint3Space)])
 
     #Take an initial guess at the axis as the vector between basepoint and the centre of mass: COM=([0,0,0])
-    zVecGuess=(array([0.0,0.0,0.0])-basePoint3Space)/linalg.norm(basePoint3Space) 
+    zVecGuess=(np.array([0.0,0.0,0.0])-basePoint3Space)/np.linalg.norm(basePoint3Space) 
 
     #compute point at z=0 for line through basepoint in direction of zVecGuess. The length of the cylinder is irrelevant. Thus we can use the point where the axis crosses the yx plane to define the base point.
     #This eliminates another parameter for this fit. Only a problem if the z-axis is parallel to the xy plane. we'll cross that bridge when it turns up. 
     #basePoint2Space=array([-1.0*ZVecMeanNorm[0]*basePoint3Space[2]/ZVecMeanNorm[2]+basePoint3Space[0],-1.0*ZVecMeanNorm[1]*basePoint3Space[2]/ZVecMeanNorm[2]+basePoint3Space[1],0])
-    basePoint2Space=array([-1.0*zVecGuess[0]*basePoint3Space[2]/zVecGuess[2]+basePoint3Space[0],-1.0*zVecGuess[1]*basePoint3Space[2]/zVecGuess[2]+basePoint3Space[1],0])
+    basePoint2Space=np.array([-1.0*zVecGuess[0]*basePoint3Space[2]/zVecGuess[2]+basePoint3Space[0],-1.0*zVecGuess[1]*basePoint3Space[2]/zVecGuess[2]+basePoint3Space[1],0])
     
     #add the ZVecGuess and initial basePoint 3Space to the plot list   
     vecListA+=[basePoint3Space]
@@ -2868,11 +3334,11 @@ def readSymmetryFromAtoms(atoms,capRes,plotFig):
     AllAtomsListFlat=[item for sublist in AllAtomList for item in sublist]
 
     #find the overall range of the data vectors
-    maxVals=amax(AllAtomsListFlat,0)
-    minVals=amin(AllAtomsListFlat,0)
+    maxVals=np.amax(AllAtomsListFlat,0)
+    minVals=np.amin(AllAtomsListFlat,0)
     
     #the radius ought not to be larger than half the longest possible distance within the cloud of data and must be greater than 0. whacked in a 20 because collagen is long and thin and fitting was being silly.
-    radiusRange=linalg.norm(maxVals-minVals)/10
+    radiusRange=np.linalg.norm(maxVals-minVals)/10
     
     #The base point parameter on the xy plane should not move more than radiusRange in any direction from the initial basepoint guess 
     
@@ -2896,7 +3362,7 @@ def readSymmetryFromAtoms(atoms,capRes,plotFig):
     
     #construct the final vectors for the helix axis.
     zFinal=ThreeDPolarToXYZ(1.0,float(finalFit[0][1]),float(finalFit[0][2]))
-    basePointFinal=array([finalFit[0][3],finalFit[0][4],0])
+    basePointFinal=np.array([finalFit[0][3],finalFit[0][4],0])
 
     #add the final Z and basePoint to the plot list (after translating out of COM frame)   
     vecListA+=[basePointFinal]
@@ -2922,22 +3388,22 @@ def readSymmetryFromAtoms(atoms,capRes,plotFig):
                 for atom in curRes:
                     if atom[1] in ['CA']: 
                         if atom[3] in ['GLY']:
-                            CAlphaGly.append(array([atom[7],atom[8],atom[9]]))
+                            CAlphaGly.append(np.array([atom[7],atom[8],atom[9]]))
                         if atom[3] in ['PRO']:
-                            CAlphaPro.append(array([atom[7],atom[8],atom[9]]))
+                            CAlphaPro.append(np.array([atom[7],atom[8],atom[9]]))
                         if atom[3] in ['HYP']:
-                            CAlphaHyp.append(array([atom[7],atom[8],atom[9]]))
+                            CAlphaHyp.append(np.array([atom[7],atom[8],atom[9]]))
         else:
             #if capRes is non-zero then ignore capRes residues at either end of the array
             for curRes in residues[capRes:-capRes:1]:
                 for atom in curRes:
                     if atom[1] in ['CA']: 
                         if atom[3] in ['GLY']:
-                            CAlphaGly.append(array([atom[7],atom[8],atom[9]]))
+                            CAlphaGly.append(np.array([atom[7],atom[8],atom[9]]))
                         if atom[3] in ['PRO']:
-                            CAlphaPro.append(array([atom[7],atom[8],atom[9]]))
+                            CAlphaPro.append(np.array([atom[7],atom[8],atom[9]]))
                         if atom[3] in ['HYP']:
-                            CAlphaHyp.append(array([atom[7],atom[8],atom[9]]))
+                            CAlphaHyp.append(np.array([atom[7],atom[8],atom[9]]))
 
     #Now fit the radius
     bounds=[(0,radiusRange)]
@@ -2957,7 +3423,7 @@ def readSymmetryFromAtoms(atoms,capRes,plotFig):
     #print 'Pro Radius:', ProRadiusData[0][0]
    
     #Find the chain angle and displacement
-    bounds=[(-2.5*pi,2.5*pi),(-10,10)]
+    bounds=[(-2.5*np.pi,2.5*np.pi),(-10,10)]
     
     #create a function pointer
     Chain1To2=(lambda x: RMSDBetweenChains(x,basePointFinal,zFinal,CAlphaGlyList[0],CAlphaGlyList[1],fig4))
@@ -2965,16 +3431,16 @@ def readSymmetryFromAtoms(atoms,capRes,plotFig):
     Chain3To1=(lambda x: RMSDBetweenChains(x,basePointFinal,zFinal,CAlphaGlyList[2], CAlphaGlyList[0],fig4))
     
     #minimise the RadialDistanceProjection sum starting with the initial guess
-    Chain1To2Params=fmin_l_bfgs_b(Chain1To2, [-100*pi/180,-2.8], approx_grad=True, bounds=bounds, factr=10, epsilon=1e-10, maxfun=1000, disp=0)
-    Chain2To3Params=fmin_l_bfgs_b(Chain2To3, [-100*pi/180,-2.8], approx_grad=True, bounds=bounds, factr=10, epsilon=1e-10, maxfun=1000, disp=0) 
-    Chain3To1Params=fmin_l_bfgs_b(Chain3To1, [-100*pi/180,-2.8], approx_grad=True, bounds=bounds, factr=10, epsilon=1e-10, maxfun=1000, disp=0)
+    Chain1To2Params=fmin_l_bfgs_b(Chain1To2, [-100*np.pi/180,-2.8], approx_grad=True, bounds=bounds, factr=10, epsilon=1e-10, maxfun=1000, disp=0)
+    Chain2To3Params=fmin_l_bfgs_b(Chain2To3, [-100*np.pi/180,-2.8], approx_grad=True, bounds=bounds, factr=10, epsilon=1e-10, maxfun=1000, disp=0) 
+    Chain3To1Params=fmin_l_bfgs_b(Chain3To1, [-100*np.pi/180,-2.8], approx_grad=True, bounds=bounds, factr=10, epsilon=1e-10, maxfun=1000, disp=0)
     
     #print "Chain1To2Params: ",Chain1To2Params[0][0]*180.0/pi,Chain1To2Params 
     #print "Chain2To3Params: ",Chain2To3Params[0][0]*180.0/pi,Chain2To3Params
     #print "Chain3To1Params: ",Chain3To1Params[0][0]*180.0/pi,Chain3To1Params
     
     DeltaZChain=(Chain2To3Params[0][1]+Chain3To1Params[0][1])/2.0
-    DeltaThetaChain=(180/pi)*(Chain2To3Params[0][0]+Chain3To1Params[0][0])/2.0
+    DeltaThetaChain=(180/np.pi)*(Chain2To3Params[0][0]+Chain3To1Params[0][0])/2.0
     
     #print "DeltaZChain; ",DeltaZChain
     #print "DeltaThetaChain: ", DeltaThetaChain
@@ -2993,13 +3459,13 @@ def readSymmetryFromAtoms(atoms,capRes,plotFig):
             for curRes in residues[0::3]:
                 for atom in curRes:
                     if atom[1] in ['N']:
-                        atomicCoords.append(array([atom[7],atom[8],atom[9]]))  
+                        atomicCoords.append(np.array([atom[7],atom[8],atom[9]]))  
         else:
             #if capRes is non-zero then ignore capRes residues at either end of the array
             for curRes in residues[capRes:-capRes:3]:
                 for atom in curRes:
                     if atom[1] in ['N']:
-                        atomicCoords.append(array([atom[7],atom[8],atom[9]]))  
+                        atomicCoords.append(np.array([atom[7],atom[8],atom[9]]))  
 
 
         #compute position of each point relative to final basePoint
@@ -3010,7 +3476,7 @@ def readSymmetryFromAtoms(atoms,capRes,plotFig):
         vecListCol+=['m']*len(basePointCoords)
         
         #project the data onto the zAxis
-        zComponents=[dot(point,zFinal) for point in basePointCoords]
+        zComponents=[np.dot(point,zFinal) for point in basePointCoords]
         
         vecListA+=[basePointFinal]*len(zComponents)
         vecListB+=[basePointFinal+z*zFinal for z in zComponents]
@@ -3024,7 +3490,7 @@ def readSymmetryFromAtoms(atoms,capRes,plotFig):
         vecListCol+=['g']*len(basePlaneVector)
         
         #Theta is the angle between each adjacent base plane Vectors in the same strand; return in degrees
-        Theta.append([arccos(dot(bPlaneVec/linalg.norm(bPlaneVec),basePlaneVector[bvCurIndex+1]/linalg.norm(basePlaneVector[bvCurIndex+1])))*180.0/pi for bvCurIndex, bPlaneVec in enumerate(basePlaneVector[:-1])])
+        Theta.append([np.arccos(np.dot(bPlaneVec/np.linalg.norm(bPlaneVec),basePlaneVector[bvCurIndex+1]/np.linalg.norm(basePlaneVector[bvCurIndex+1])))*180.0/np.pi for bvCurIndex, bPlaneVec in enumerate(basePlaneVector[:-1])])
     
         #Vertical displacement between units is the difference between each ZComponent
         DMags.append([abs(zComponents[zCurIndex+1]-curZ) for zCurIndex, curZ in enumerate(zComponents[:-1])])
@@ -3041,9 +3507,9 @@ def readSymmetryFromAtoms(atoms,capRes,plotFig):
     #print mean(Theta[0])
     #print mean(Theta[1])
     #print mean(Theta[2])
-    meanTheta=mean([item for sublist in Theta for item in sublist])
-    meanD=mean([item for sublist in DMags for item in sublist])
-    meanLengthAlongAxis=mean(lengthAlongAxis)
+    meanTheta=np.mean([item for sublist in Theta for item in sublist])
+    meanD=np.mean([item for sublist in DMags for item in sublist])
+    meanLengthAlongAxis=np.mean(lengthAlongAxis)
     numUnitsPerPeriod=360.0/meanTheta
     TruePeriod=numUnitsPerPeriod*meanD        
     #print 'Final Z Axis: ', zFinal
@@ -3065,17 +3531,17 @@ def readSymmetryFromAtoms(atoms,capRes,plotFig):
 
 
 def ThreeDPolarToXYZ(r,theta,phi):
-    x=r*sin(phi)*cos(theta)
-    y=r*sin(phi)*sin(theta)
-    z=r*cos(phi)
-    return array([x,y,z])
+    x=r*np.sin(phi)*np.cos(theta)
+    y=r*np.sin(phi)*np.sin(theta)
+    z=r*np.cos(phi)
+    return np.array([x,y,z])
     
 def XYZTo3DPolar(v):
-    r=linalg.norm(v)
+    r=np.linalg.norm(v)
     vHat=v/r
-    phi=arccos(vHat[2])
-    theta=atan2(vHat[1],vHat[0])
-    return array([r,theta,phi])
+    phi=np.arccos(vHat[2])
+    theta=np.atan2(vHat[1],vHat[0])
+    return np.array([r,theta,phi])
 
 def RMSDBetweenChains(x,basePoint,ZVec,list1,list2,fig):
     
@@ -3084,28 +3550,28 @@ def RMSDBetweenChains(x,basePoint,ZVec,list1,list2,fig):
     list2BasePoint=[l-basePoint for l in list2]
     
     #normalise Z vector
-    ZVecNorm=ZVec/linalg.norm(ZVec)
+    ZVecNorm=ZVec/np.linalg.norm(ZVec)
     
     #extract parameters
     deltaTheta, deltaZ=x
     
     #Find Z components of list2BasePoint
-    zComp=[dot(dataPoint,ZVecNorm) for dataPoint in list2BasePoint]
+    zComp=[np.dot(dataPoint,ZVecNorm) for dataPoint in list2BasePoint]
     
     #project each data Vector onto a plane perpendicular to the ZVector 
     RVecs=[dataPoint-z*ZVecNorm for dataPoint,z in zip(list2BasePoint,zComp)]
     
     #Compute two basis vectors in the plane
-    basisVec1=RVecs[0]/linalg.norm(RVecs[0])
-    basisVec2=cross(basisVec1,ZVecNorm)
-    basisVec2=basisVec2/linalg.norm(basisVec2)
+    basisVec1=RVecs[0]/np.linalg.norm(RVecs[0])
+    basisVec2=np.cross(basisVec1,ZVecNorm)
+    basisVec2=basisVec2/np.linalg.norm(basisVec2)
 
     #Rotate basis vectors
-    basisVec1New= cos(deltaTheta)*basisVec1+sin(deltaTheta)*basisVec2
-    basisVec2New= -sin(deltaTheta)*basisVec1+cos(deltaTheta)*basisVec2
+    basisVec1New= np.cos(deltaTheta)*basisVec1+np.sin(deltaTheta)*basisVec2
+    basisVec2New= -np.sin(deltaTheta)*basisVec1+np.cos(deltaTheta)*basisVec2
     
     #Compute rotated vector for RVecs
-    NewRVecs=[ dot(r,basisVec1)*basisVec1New + dot(r,basisVec2)*basisVec2New for r in RVecs]
+    NewRVecs=[ np.dot(r,basisVec1)*basisVec1New + np.dot(r,basisVec2)*basisVec2New for r in RVecs]
     
     #Compute the new overall vector
     list2Shifted=[  (z - deltaZ)*ZVecNorm + r for r,z in zip(NewRVecs,zComp)]
@@ -3114,7 +3580,7 @@ def RMSDBetweenChains(x,basePoint,ZVec,list1,list2,fig):
     numAtoms=min(len(list1),len(list2))
     
     #Compute the sum of the difference between the atoms in the lists
-    ssd=sum([linalg.norm(l1-l2) for l1, l2 in zip(list1BasePoint[0:numAtoms],list2Shifted[0:numAtoms])])
+    ssd=sum([np.linalg.norm(l1-l2) for l1, l2 in zip(list1BasePoint[0:numAtoms],list2Shifted[0:numAtoms])])
     
     if fig:
         #generate the Vectors for 'live' plotting
@@ -3145,10 +3611,10 @@ def radialDistanceProjectionSumKnownAxis(radius,basePoint,ZVec,dataPoints,fig):
     dataPointsHelixFrame=[dataPoint-basePoint for dataPoint in dataPoints]
     
     #project each data Vector onto a plane perpendicular to the ZVector 
-    RVecs=[dataPoint-dot(dataPoint,ZVec)*ZVec for dataPoint in dataPointsHelixFrame]
+    RVecs=[dataPoint-np.dot(dataPoint,ZVec)*ZVec for dataPoint in dataPointsHelixFrame]
     
     #Compute the sum of the squared normal distance between each data point and the suggested radius
-    ssd=sum([(linalg.norm(r)-radius)**2.0 for r in RVecs])
+    ssd=sum([(np.linalg.norm(r)-radius)**2.0 for r in RVecs])
     
     #if fig is defined then compute and plot the output vectors
     if fig:
@@ -3165,12 +3631,12 @@ def radialDistanceProjectionSumKnownAxis(radius,basePoint,ZVec,dataPoints,fig):
         vectorListA+=[basePoint]*len(RVecs)
         vectorListB+=[basePoint+r for r in RVecs]
         vectorListC+=['c']*len(RVecs)
-        tAll=linspace(-pi,pi,25)
-        xList=[radius*cos(t) for t in tAll]
-        yList=[radius*sin(t) for t in tAll]
-        pVect1=RVecs[0]/linalg.norm(RVecs[0])
-        pVect2=cross(ZVec,pVect1)
-        pVect2=pVect2/linalg.norm(pVect2)
+        tAll=np.linspace(-np.pi,np.pi,25)
+        xList=[radius*np.cos(t) for t in tAll]
+        yList=[radius*np.sin(t) for t in tAll]
+        pVect1=RVecs[0]/np.linalg.norm(RVecs[0])
+        pVect2=np.cross(ZVec,pVect1)
+        pVect2=pVect2/np.linalg.norm(pVect2)
         cpList=[basePoint+ x*pVect1+y*pVect2 for x,y in zip(xList,yList)]
         vectorListA+=cpList
         vectorListB+=cpList[1:]
@@ -3188,17 +3654,17 @@ def radialDistanceProjectionSum(params,dataPoints,fig):
     radius,theta,phi,bx,by=params
     
     #construct vector arrays from params - can always find a base point on the xy plane
-    basePoint=array([bx,by,0])
+    basePoint=np.array([bx,by,0])
     ZVec=ThreeDPolarToXYZ(1.0,float(theta),float(phi))
     
     #project each data Vector onto a plane perpendicular to the ZVector 
-    RVecs=[dataPoint-dot(dataPoint,ZVec)*ZVec for dataPoint in dataPoints]
+    RVecs=[dataPoint-np.dot(dataPoint,ZVec)*ZVec for dataPoint in dataPoints]
     
     #project the base vector onto the same plane.
-    baseVectorOnPlane=basePoint-dot(basePoint,ZVec)*ZVec
+    baseVectorOnPlane=basePoint-np.dot(basePoint,ZVec)*ZVec
 
     #Compute the sum of the squared normal distance between each data point and the defined cylinder
-    ssd=sum([(linalg.norm(r-baseVectorOnPlane)-radius)**2.0 for r in RVecs])
+    ssd=sum([(np.linalg.norm(r-baseVectorOnPlane)-radius)**2.0 for r in RVecs])
 
     #if fig is defined then compute and plot the output vectors
     if fig:
@@ -3215,12 +3681,12 @@ def radialDistanceProjectionSum(params,dataPoints,fig):
         vectorListA+=[baseVectorOnPlane]*len(RVecs)
         vectorListB+=[baseVectorOnPlane+r for r in RVecs]
         vectorListC+=['c']*len(RVecs)
-        tAll=linspace(-pi,pi,25)
-        xList=[radius*cos(t) for t in tAll]
-        yList=[radius*sin(t) for t in tAll]
-        pVect1=RVecs[0]/linalg.norm(RVecs[0])
-        pVect2=cross(ZVec,pVect1)
-        pVect2=pVect2/linalg.norm(pVect2)
+        tAll=np.linspace(-np.pi,np.pi,25)
+        xList=[radius*np.cos(t) for t in tAll]
+        yList=[radius*np.sin(t) for t in tAll]
+        pVect1=RVecs[0]/np.linalg.norm(RVecs[0])
+        pVect2=np.cross(ZVec,pVect1)
+        pVect2=pVect2/np.linalg.norm(pVect2)
         cpList=[baseVectorOnPlane+ x*pVect1+y*pVect2 for x,y in zip(xList,yList)]
         vectorListA+=cpList
         vectorListB+=cpList[1:]
@@ -3344,26 +3810,26 @@ def checkchirality(atoms, fix_chirality=False):
         if residueName in ['PRO']:
             for atom in curResidue:
                 if (atom[1]=='N'):
-                    NPOS=array([atom[7],atom[8],atom[9]])
+                    NPOS=np.array([atom[7],atom[8],atom[9]])
                 if (atom[1]=='CA'):
-                    CAPOS=array([atom[7],atom[8],atom[9]])
+                    CAPOS=np.array([atom[7],atom[8],atom[9]])
                 if (atom[1]=='CB'):
-                    CBPOS=array([atom[7],atom[8],atom[9]])
+                    CBPOS=np.array([atom[7],atom[8],atom[9]])
                 if (atom[1]=='CG'):
-                    CGPOS=array([atom[7],atom[8],atom[9]])
+                    CGPOS=np.array([atom[7],atom[8],atom[9]])
                 if (atom[1]=='CD'):
-                    CDPOS=array([atom[7],atom[8],atom[9]])
+                    CDPOS=np.array([atom[7],atom[8],atom[9]])
                 if (atom[1]=='C'):
-                    CPOS=array([atom[7],atom[8],atom[9]])
+                    CPOS=np.array([atom[7],atom[8],atom[9]])
 
             #compute chirality of position 2.
             NCA = NPOS-CAPOS
             CACB = CBPOS-CAPOS
             CAC = CPOS-CAPOS
 
-            N=cross(NCA,CACB)
-            N=N/linalg.norm(N)
-            CZ=vdot(CAC,N)
+            N=np.cross(NCA,CACB)
+            N=N/np.linalg.norm(N)
+            CZ=np.vdot(CAC,N)
             
             # if it's not S then report it as R
             chirality2='S'
@@ -3380,8 +3846,8 @@ def checkchirality(atoms, fix_chirality=False):
                 if fix_chirality:
                     N_C = CPOS - NPOS
                     N_CA = CAPOS - NPOS
-                    normal = cross(N_C, N_CA)
-                    normal = normal / linalg.norm(normal)
+                    normal = np.cross(N_C, N_CA)
+                    normal = normal /np.linalg.norm(normal)
                     invert_atoms_in_plane(curResidue, NPOS, normal)
                     
             ## debug hack to make sure it actually works!
@@ -3395,19 +3861,19 @@ def checkchirality(atoms, fix_chirality=False):
         if residueName in ['HYP']:
             for atom in curResidue:
                 if (atom[1]=='N'):
-                    NPOS=array([atom[7],atom[8],atom[9]])
+                    NPOS=np.array([atom[7],atom[8],atom[9]])
                 if (atom[1]=='CA'):
-                    CAPOS=array([atom[7],atom[8],atom[9]])
+                    CAPOS=np.array([atom[7],atom[8],atom[9]])
                 if (atom[1]=='CB'):
-                    CBPOS=array([atom[7],atom[8],atom[9]])
+                    CBPOS=np.array([atom[7],atom[8],atom[9]])
                 if (atom[1]=='CG'):
-                    CGPOS=array([atom[7],atom[8],atom[9]])
+                    CGPOS=np.array([atom[7],atom[8],atom[9]])
                 if (atom[1]=='CD'):
-                    CDPOS=array([atom[7],atom[8],atom[9]])
+                    CDPOS=np.array([atom[7],atom[8],atom[9]])
                 if (atom[1]=='C'):
-                    CPOS=array([atom[7],atom[8],atom[9]])
+                    CPOS=np.array([atom[7],atom[8],atom[9]])
                 if (atom[1]=='OD1'):
-                    OPOS=array([atom[7],atom[8],atom[9]])
+                    OPOS=np.array([atom[7],atom[8],atom[9]])
 
             #compute chirality of position 2.
             chirality2='S'
@@ -3415,9 +3881,9 @@ def checkchirality(atoms, fix_chirality=False):
             CACB = CBPOS-CAPOS
             CAC = CPOS-CAPOS
 
-            N=cross(NCA,CACB)
-            N=N/linalg.norm(N)
-            CZ=vdot(CAC,N)
+            N=np.cross(NCA,CACB)
+            N=N/np.linalg.norm(N)
+            CZ=np.vdot(CAC,N)
             if CZ>=0:
                 chirality2='R'
 
@@ -3427,9 +3893,9 @@ def checkchirality(atoms, fix_chirality=False):
             CBCG = CGPOS-CBPOS
             OCG = CGPOS-OPOS
 
-            N=cross(CDCG,CBCG)
-            N=N/linalg.norm(N)
-            CZ=vdot(OCG,N)
+            N=np.cross(CDCG,CBCG)
+            N=N/np.linalg.norm(N)
+            CZ=np.vdot(OCG,N)
             if CZ<0:
                 chirality4='S'
 
@@ -3456,8 +3922,8 @@ def checkchirality(atoms, fix_chirality=False):
                         # Invert the residue in the plane formed by the N, C and CA planes.
                         N_C = CPOS - NPOS
                         N_CA = CAPOS - NPOS
-                        normal = cross(N_C, N_CA)
-                        normal = normal / linalg.norm(normal)
+                        normal = np.cross(N_C, N_CA)
+                        normal = normal / np.linalg.norm(normal)
                         invert_atoms_in_plane(curResidue, NPOS, normal)
 
 
@@ -3475,8 +3941,8 @@ def checkchirality(atoms, fix_chirality=False):
                         # Use CG as the origin.
                         CG_CD = CDPOS - CGPOS
                         CG_CB = CBPOS - CGPOS
-                        normal = cross(CG_CD, CG_CB)
-                        normal = normal / linalg.norm(normal)
+                        normal = np.cross(CG_CD, CG_CB)
+                        normal = normal / np.linalg.norm(normal)
                         invert_atoms_in_plane(atoms_of_note, CGPOS, normal)
 
 
@@ -3494,15 +3960,15 @@ def checkchirality(atoms, fix_chirality=False):
                         # Use CG as the origin.
                         CG_CD = CDPOS - CGPOS
                         CG_CB = CBPOS - CGPOS
-                        normal = cross(CG_CD, CG_CB)
-                        normal = normal / linalg.norm(normal)
+                        normal = np.cross(CG_CD, CG_CB)
+                        normal = normal / np.linalg.norm(normal)
                         invert_atoms_in_plane(atoms_of_note, CGPOS, normal)
                         
                         # Invert the residue in the plane formed by the N, C and CA planes.
                         N_C = CPOS - NPOS
                         N_CA = CAPOS - NPOS
-                        normal = cross(N_C, N_CA)
-                        normal = normal / linalg.norm(normal)
+                        normal = np.cross(N_C, N_CA)
+                        normal = normal / np.linalg.norm(normal)
                         invert_atoms_in_plane(curResidue, NPOS, normal)
 
 
@@ -3515,15 +3981,15 @@ def invert_atoms_in_plane( atom_list, point, normal):
     which contains the given point and a specified normal vector'''
 
     # ensure the normal is a unit normal
-    n_hat = normal / linalg.norm(normal)
+    n_hat = normal / np.linalg.norm(normal)
         
     # reflect every atom in the list of atoms
     for atom in atom_list:
         # translate atom to be relative to the given point in the plane.
-        V = array([atom[7], atom[8], atom[9]]) - point
+        V = np.array([atom[7], atom[8], atom[9]]) - point
         
         # perform the reflection in the plane.
-        V_refl = V - 2 * dot(V, n_hat) * n_hat
+        V_refl = V - 2 * np.dot(V, n_hat) * n_hat
         
         # update the atom list and add back in the original point.
         atom[7] = V_refl[0] + point[0]

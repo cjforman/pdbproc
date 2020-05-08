@@ -1,11 +1,9 @@
 #!/usr/bin/env python
-import sys,os
-from numpy import *
-from scipy import *
-from string import *
-from pdbLib import *
-
-sys.path.append('/usr/local/lib64/python2.4/site-packages')
+import sys
+import os
+import numpy as np
+import scipy as sp
+import pdbLib as pl
 
 def commandLineProc():
 
@@ -13,12 +11,37 @@ def commandLineProc():
 pdb file processor
 ==================
 
-Syntax:	pdbproc.py command inpfile [param1] [param2]
+General Syntax:	pdbproc.py command inpfile1 [inpfile2] [param1] [param2]
 
 where command and inpfile are mandatory. Command is the action to perform and inpfile
 is the name of a PDB file in standard format. Each command takes variable number of parameters.
 
 command is one of:
+    
+    fragmentPDB, fragmentpdb, fpdb, fPDB, or FPDB inpfile resfile 
+    
+        Generates a series of minipdbs based on the pairs of start and stop residues in resfile.
+        if the start residues does not exist then the output starts at the first residue.
+        If the end residue does not exist the tail of the PDB is provided from the start residue onwards.
+        iF the end residue is before the start residue then no output is returned. 
+        
+        example resfile
+        1 10
+        1 100
+        35 39
+
+    addTermini inpfile N=-30,10 C
+        aliases: addTermini, addtermini, AddTermini, at, aT, AT 
+        Adds N or C terminus line to PDB (NME, ACE) if N and/or C are present in the params. 
+        A dihedral and bond angle pair may be specified for each terminus. 
+        otherwise default is 0, 109.
+        Bond length is difference between C and CA or CA and N in adjacent residue. 
+
+    'convertseq', 'ConvertSeq', 'cs', 'cS', 'CS', 'Cs']
+    cs inpfile seqfile
+        Takes an input file which consists of single letter codes of a protein sequence, like a mode 3 sequence file 
+        from readSequence. Outputs a file with filename seqfile which has the three letter codes as per mode 2 of readSequence.
+        The three letter codes output file is compatible with the modify sequence command.  
 
     readpucker or rp inpfile [outfile]
         Checks the pucker state of each residue in inpfile.
@@ -71,6 +94,10 @@ command is one of:
         looks first for infile or infile.pdb and loads it. 
         Then looks for the rulefile or rulefile.lines. which has the format:
     
+    flipCT fct inpfile cis_trans forcefield
+        Takes a cis trans file from gmin, and performs a series of rotations to convert all the cis peptides to trans.
+        Then runs it through the PAG process with a noreduce optionto generate a restart file
+    
     string integer
         where string is the string which is contained in the ATOM line that qualifies it for removal, 
         eg H, C, GLY or whatever.  integer is the zero based column number in which the text is to appear.
@@ -79,7 +106,20 @@ command is one of:
         if the outfile is not specified then the default is infile_short.pdb.
     
     prepAmberGmin or PAG inpfile rulefile forcefield [prepFile] [paramsFile]
-        performs the following sequence of commands starting from a pdb file
+        rulefile can be: 
+            "reduce" which uses the reduce program provided with leap to Trim the structure.
+            "noreduce" does not edit the structure at all. 
+            <filename> which is a is list of rules concerning which objects (residues ot atoms) to omit. 
+            item1 field1
+            item2 field2
+            ...
+              wher item is the value and field is the pdb field.  e.g.
+              H 2
+              TYR 3
+              
+              which would remove all lines containing an H in field 2 (atom names) and all lines containing TYR in field 3 (residues)  
+            
+        PAG then performs the following sequence of commands starting from a pdb file
     
             removeAtoms inpfile rulefile inpfile_clean.pdb
             source leaprc.forcefield
@@ -184,8 +224,13 @@ command is one of:
         Each list sets of three  [residue numbers, twist about the axis, Distance along axis, radius, number of units per period and true period].
         Dumps a gnuplot readable file.
             
-    rotateGroup or RG or rg inpfile atomGroup angle [outfile]
-        rotates all the atomgroups defined in the atomgroups file by the specified angle
+    rotateGroup or RG or rg inpfile atomGroup [outfile]
+        rotates all the atomgroups defined in the atomgroups file by angle specified in the atom groups file.
+        This is a change to the conventional meaning of the parameter in the atomgroups file. The indicies are 
+        order the atoms appear in the PDB.
+        GROUP name atomaxis1 atomaxis2 groupsize angle
+        atom1index
+        atom2index 
     
     replacePdbXyz or xyz2pdb inpfile xyzfile [outputfile]
         takes the input pdb file and generates a new pdb file for every frame in the xyzfile
@@ -204,108 +249,145 @@ command is one of:
     command=[]
     params=[]
     
+    # process command line params
     if len(sys.argv) < 3:
-      print usage
-      sys.exit(1)
+        print usage
+        sys.exit(1)
     else:
-      command=sys.argv[1]
-      infile=sys.argv[2]
+        command=sys.argv[1]
+        infile=sys.argv[2]
 
     try:
-      vst=open(infile,'r')
-      vst.close()
-    except:
-      try:
-        testfile=infile+'.pdb'
-        vst=open(testfile,'r')
-        infile=testfile
+        vst=open(infile,'r')
         vst.close()
-      except:
-        print "Unrecognised input file name: "+infile+" or "+infile+".pdb"
-        exit(1)
+    except:
+        try:
+            testfile=infile+'.pdb'
+            vst=open(testfile,'r')
+            infile=testfile
+            vst.close()
+        except:
+            print "Unrecognised input file name: "+infile+" or "+infile+".pdb"
+            exit(1)
 
-    print "Command: "+command
-    print "infile: "+infile
+    print "Command: " + command
+    print "infile: " + infile
 
-    #### READ PUCKER
-    if command in ['readpucker', 'rp']:
-      if len(sys.argv)==3:
-         params=fileRootFromInfile(infile)
-         params=params+'.pucker'
-      else:
-         params=sys.argv[3]
-      print "rp params: "+params
+    # fragmentPDB or fpdb inpfile resfile
+    if command in ['fragmentPDB', 'fragmentpdb', 'fpdb', 'fPDB', 'FPDB']:
+        if len(sys.argv)==4:
+            params=sys.argv[3]
+            print "fpdb params: ", params
+        else:
+            print "fragmentPDB: Must specify inpfile and resflle:  fpdb inpfile resfile"
+            exit(1)
 
+    elif command in ['flipCT', 'fct']:
+        if len(sys.argv)!=5:
+            print "flipCT: Must specify inpfile, cistrans file and a force field:  fct inpfile cistran forcefield"
+            exit(1)
+        params = sys.argv[3:]         
+    
+    elif command in ['convertseq', 'ConvertSeq', 'cs', 'cS', 'CS', 'Cs']:
+        if len(sys.argv)!=4:
+            print "convertseq: Must specify inpfile and seq flle:  cs inpfile seqfile"
+            exit(1)
+        params = sys.argv[3]         
+        
+    # addTermini or at inpfile N(100,00) C
+    elif command in ['addTermini', 'addtermini', 'AddTermini', 'at','aT','AT']:
+        if (len(sys.argv)<3) or (len(sys.argv)>5):
+            print "addTermini: Must specify inpfile and up to two termini (angles are optional). format N=a,b C=a,b "
+            exit(1)
+        if len(sys.argv)==4:            
+            params = [ sys.argv[3] ]
+        if len(sys.argv)==5:
+            params = sys.argv[3:]
+        print "add termini params: ", params
+    
+    # READ PUCKER
+    elif command in ['readpucker', 'rp']:
+        if len(sys.argv)==3:
+            params = pl.fileRootFromInfile(infile)
+            params = params+'.pucker'
+        else:
+            params=sys.argv[3]
+        print "rp params: ", params
+
+    # check pucker pattern
     elif command in ['checkPuckerPattern', 'cpp', 'CPP']:
-      print 'No Params for check Pucker Pattern'
-      # no params allowed for this command
+        print 'No Params for check Pucker Pattern'
+        # no params allowed for this command
 
     # Read Chirality
     elif command in ['readchirality', 'rc', 'RC','rC','Rc']:
         if len(sys.argv)==3:
-            params=fileRootFromInfile(infile)
-            params=params+'.chi'
+            params = pl.fileRootFromInfile(infile)
+            params = params + '.chi'
         else:
             params=sys.argv[3]
-        print "rc params: "+params
+        print "rc params: " + params
 
+    # group atoms
     elif command in ['groupAtomsXYZ', 'gAX', 'gax', 'GAX']:
         if len(sys.argv)==3:
-            params=fileRootFromInfile(infile)
-            params=params+'.xyz'
+            params = pl.fileRootFromInfile(infile)
+            params = params + '.xyz'
         else:
-            params=sys.argv[3]
-        print "gax params: "+params
+            params = sys.argv[3]
+        print "gax params: " + params
 
-
+    # make xyz for blender
     elif command in ['makeXYZForBlender', 'mXB', 'mxb']:
         if len(sys.argv)==3:
-            params=fileRootFromInfile(infile)
-            params=params+'.xyz'
+            params = pl.fileRootFromInfile(infile)
+            params = params + '.xyz'
         else:
-            params=sys.argv[3]
-        print "mXB params: "+params
+            params = sys.argv[3]
+        print "mXB params: " + params
 
     # Fix Chirality
     elif command in ['fixchirality', 'fc', 'FC','fC','Fc']:
         if len(sys.argv)==3:
-            params=fileRootFromInfile(infile)
-            params=params+'_chi.pdb'
+            params = pl.fileRootFromInfile(infile)
+            params = params + '_chi.pdb'
         else:
-            params=sys.argv[3]
-        print "fc params: "+params
+            params = sys.argv[3]
+        print "fc params: " + params
 
     # ramachandran 
     elif command in ['ramachandran', 'rmc']:
-        params=fileRootFromInfile(infile)+'.gplt'
-        params.append(fileRootFromInfile(infile)+'.rama')
+        params = [ pl.fileRootFromInfile(infile)+'.gplt' ]
+        params.append(pl.fileRootFromInfile(infile)+'.rama')
         
-        print "ramachandran plot command not implemented: "+params
+        print "ramachandran plot command not implemented: ", params
 
     #replace pdb with xyz data
     elif command in ['replacePdbXyz','xyz2pdb']:
-	if len(sys.argv)<4:
-		print "ReplacePdbXyz usage: pdbproc.py xyz2pdb inpfile xyzfile [outfile]"
-		sys.exit(0)
-	elif (len(sys.argv)==4):
-	     params=[sys.argv[3]]
-	     params.append(fileRootFromInfile(infile))
+        if len(sys.argv)<4:
+            print "ReplacePdbXyz usage: pdbproc.py xyz2pdb inpfile xyzfile [outfile]"
+            sys.exit(0)
+        elif (len(sys.argv)==4):
+            params=[sys.argv[3]]
+            params.append(pl.fileRootFromInfile(infile))
         elif (len(sys.argv)>4):
-	     params=sys.argv[3:5]
-	print "xyz2pdb command: "
+            params=sys.argv[3:5]
+
+        print "xyz2pdb command: "
         print params
 
     #Rotate groups
     elif command in ['rotateGroup', 'RG', 'rg']:
-	if len(sys.argv)<4:
-		print "Rotate group usage: pdbproc.py rotateGroup inpfile atomgroups [outfile]"
-		sys.exit(0)
-	elif (len(sys.argv)==4):
-	     params=[sys.argv[3]]
-	     params.append(fileRootFromInfile(infile)+'.rot.pdb')
+        if len(sys.argv)<4:
+            print "Rotate group usage: pdbproc.py rotateGroup inpfile atomgroups [outfile]"
+            sys.exit(0)
+        elif (len(sys.argv)==4):
+            params = [ sys.argv[3] ]
+            params.append( pl.fileRootFromInfile(infile) + '.rot.pdb' )
         elif (len(sys.argv)>4):
-	     params=sys.argv[3:5]
-	print "rotateGroup command: "
+            params = sys.argv[3:5]
+
+        print "rotateGroup command: "
         print params
 
     ##Read Symmetry
@@ -313,27 +395,28 @@ command is one of:
         if len(sys.argv)==3:
             params=[0]
             params.append(0)
-            params.append(fileRootFromInfile(infile)+'.sym')
+            params.append( pl.fileRootFromInfile(infile) + '.sym' )
             
         else:
             if len(sys.argv)==4:
                 params=[int(sys.argv[3])]
-                params.append(0)
-                params.append(fileRootFromInfile(infile)+'.sym')
+                params.append( 0 )
+                params.append( pl.fileRootFromInfile(infile) + '.sym' )
                     
             else:
                 if len(sys.argv)==5:
-                    params=[int(sys.argv[3])]
-                    params.append(sys.argv[4])
-                    params.append(fileRootFromInfile(infile)+'.sym')
+                    params = [int( sys.argv[3] ) ]
+                    params.append( sys.argv[4] )
+                    params.append( pl.fileRootFromInfile(infile) + '.sym' )
                 else:
                     #6 params or longer longer... 
-                    params=[int(sys.argv[3])]
-                    params.append(sys.argv[4])
-                    params.append(sys.argv[5])
+                    params=[int( sys.argv[3]) ]
+                    params.append( sys.argv[4] )
+                    params.append( sys.argv[5] )
 
                     
-        print ["read symmetry params: "]+params
+        print ["read symmetry params: "] 
+        print params
 
     ##Pucker State Summary; has no command parameter processing; just has an infile
     elif command in ['puckerBreakDown', 'PBD', 'pbs']:
@@ -341,15 +424,15 @@ command is one of:
  
     #### Convert Proline to HydroxyProline
     elif command in ['proToHyp','PH','pH','Ph','ph']:
-      if len(sys.argv)<4:
-         print "proToHyp: you must specify an input pdb file and a file with a list of residue to convert, and an optional output file"
-         print usage
-         exit(1)
-      elif len(sys.argv)==5:
-          params=sys.argv[2:]
-      else:
-         params.append(sys.argv[3])
-         params.append(fileRootFromInfile(infile)+'_hyp.pdb')
+        if len(sys.argv)<4:
+            print "proToHyp: you must specify an input pdb file and a file with a list of residue to convert, and an optional output file"
+            print usage
+            sys.exit(1)
+        elif len(sys.argv)==5:
+            params = sys.argv[2:]
+        else:
+            params.append( sys.argv[3] )
+            params.append( pl.fileRootFromInfile(infile) + '_hyp.pdb' )
 
 
     #### read Sequence
@@ -359,48 +442,47 @@ command is one of:
             exit(1)
         elif len(sys.argv)==4: 
             params=[sys.argv[3]]
-            params.append(fileRootFromInfile(infile)+'.seq')
+            params.append( pl.fileRootFromInfile(infile) + '.seq' )
         else:
             params=sys.argv[3:]
             
-        l= "readSequence params: "
+        l = "readSequence params: "
         for p in params:
-            l+=str(p)+' '
+            l = l + str(p) + ' '
         print l
 
     #### Replace Sequence
     elif command in ['modifySequence','MS','mS','Ms','ms']:
-      if len(sys.argv)<5:
-         print "modifySequence input.pdb newSeq resNumStart [output.pdb]"
-         print usage
-         exit(1)
-      elif len(sys.argv)==6:
-          params=sys.argv[3:]
-      else:
-         params=sys.argv[3:]
-         params.append(fileRootFromInfile(infile)+'_ms.pdb')
+        if len(sys.argv)<5:
+            print "modifySequence input.pdb newSeq resNumStart [output.pdb]"
+            print usage
+            exit(1)
+        elif len(sys.argv)==6:
+            params=sys.argv[3:]
+        else:
+            params = [ sys.argv[3:] ]
+            params.append( pl.fileRootFromInfile(infile) + '_ms.pdb' )
 
     #### RENAME TERMINI
     elif command in ['renameTermini','rt','rT','RT']:
-      if len(sys.argv)<4:
-         print "renameTermini: you must specify an input pdb file, and a flag"
-         print usage
-         exit(1)
-      elif len(sys.argv)==5:
-          params=sys.argv[2:]
-      else:
-         params.append(sys.argv[5])
-         params.append(fileRootFromInfile(infile)+'.prmtop')
+        if len(sys.argv)<4:
+            print "renameTermini: you must specify an input pdb file, and a flag"
+            print usage
+            exit(1)
+        elif len(sys.argv)==5:
+            params = sys.argv[2:]
+        else:
+            params.append( sys.argv[5] )
+            params.append( pl.fileRootFromInfile(infile) + '.prmtop' )
 
     #### renumberRes or RN
     elif command in ['renumberRes','rn','rN','RN']:
         #check for an outputfile
         if len(sys.argv)==3:
-            
-            params.append(fileRootFromInfile(infile)+'_ren.pdb')
+            params.append( pl.fileRootFromInfile(infile) + '_ren.pdb' )
         elif len(sys.argv)==4:
             params.append(sys.argv[3])
-            params.append(fileRootFromInfile(infile)+'_ren.pdb')
+            params.append( pl.fileRootFromInfile(infile)+'_ren.pdb' )
         elif len(sys.argv)==5:
             params.append(sys.argv[3])
             params.append(sys.argv[4])
@@ -408,44 +490,49 @@ command is one of:
 
     #### removeDuplicates
     elif command in ['removeDup','rd','RD','rD']:
-      #check for an outputfile
-      if len(sys.argv)==4:
-         params.append(sys.argv[3])
-      else:
-         params.append(fileRootFromInfile(infile)+'_noDup.pdb')
+        #check for an outputfile
+        if len(sys.argv)==4:
+            params.append(sys.argv[3])
+        else:
+            params.append( pl.fileRootFromInfile(infile) + '_noDup.pdb' )
+        print 'removeDup', params
 
-    #### checkTorsion
+    #### Read Residue Symmetry
     elif command in ['readResidueSymmetry','rrs','RRS']:
         #check for an outputfile
         if len(sys.argv)==4:
             params.append(sys.argv[3])
         else:
-            params.append(fileRootFromInfile(infile)+'.resSym')
+            params.append( pl.fileRootFromInfile(infile) + '.resSym' )
+        print 'removeDup', params
 
     #### checkTorsion
     elif command in ['checkTorsion','ct','cT','Ct','CT']:
-      #check for an outputfile
-      if len(sys.argv)==4:
-         params.append(sys.argv[3])
-      else:
-         params.append(fileRootFromInfile(infile)+'.torsion')
+        #check for an outputfile
+        if len(sys.argv)==4:
+            params.append( sys.argv[3] )
+        else:
+            params.append( pl.fileRootFromInfile(infile) + '.torsion' )
+        print 'checkTorsion', params
 
-    #### residueInfo
+    #### residueInfo    
     elif command in ['residueInfo','RI','Ri','rI','ri']:
-      #check for an outputfile
-      if len(sys.argv)==4:
-         params.append(sys.argv[3])
-      else:
-         params.append(fileRootFromInfile(infile)+'.residue')
+        #check for an outputfile
+        if len(sys.argv)==4:
+            params.append( sys.argv[3] )
+        else:
+            params.append( pl.fileRootFromInfile(infile) + '.residue' )
+        print 'residueInfo', params
 
 
     #### torsionDiff
     elif command in ['torsionDiff','td','tD','Td','TD']:
-      #check for an outputfile
-      if len(sys.argv)==4:
-         params.append(sys.argv[3])
-      else:
-         params.append('diff.torsion')
+        #check for an outputfile
+        if len(sys.argv)==4:
+            params.append(sys.argv[3])
+        else:
+            params.append('diff.torsion')
+        print 'torsionDiff', params
 
     #### puckerGroupsRigidBody
     elif command in ['puckerGroupsRB','pgrb']:
@@ -465,189 +552,231 @@ command is one of:
 
     #### puckerGroups
     elif command in ['puckergroups','pg','PG','Pg','PG']:
-      #check for an OH flag and an output file
-      if len(sys.argv)>3:
-         if len(sys.argv)==4:
-            params.append(sys.argv[3])
+        #check for an OH flag and an output file
+        if len(sys.argv)>3:
+            if len(sys.argv)==4:
+                params.append(sys.argv[3])
+                params.append('atomgroups')
+            elif len(sys.argv)>4:
+                params.append(sys.argv[3])
+                params.append(sys.argv[4])
+        else:
+            params.append(int(0))
             params.append('atomgroups')
-         elif len(sys.argv)>4:
-            params.append(sys.argv[3])
-            params.append(sys.argv[4])
-      else:
-         params.append(int(0))
-         params.append('atomgroups')
 
     #### puckerGroupSpec
     elif command in ['puckergroupSpec','pgs','PGS']:
-      #check for an outputfile
-      if len(sys.argv)<7:
-         print "Usage: puckergroupSpec <inpfile.pdb> <resnumbersFile> <OHFlag> <scaleFac> <probRot> [<outputfile>]"
-         print usage
-         exit(1)
-      else:
-         params=sys.argv[3:]
-         if len(sys.argv)==7:
-             params.append('atomgroups')
+        #check for an outputfile
+        if len(sys.argv)<7:
+            print "Usage: puckergroupSpec <inpfile.pdb> <resnumbersFile> <OHFlag> <scaleFac> <probRot> [<outputfile>]"
+            print usage
+            exit(1)
+        else:
+            params=sys.argv[3:]
+            if len(sys.argv)==7:
+                params.append('atomgroups')
 
     #### PREP FOR AMBERGMIN
     elif command in ['prepAmberGmin','pag','PAG','pAG']:
-      if len(sys.argv)<5:
-         print "prepAmberGMIN: you must specify an input file, a rule file and a forcefield."
-         print usage
-         exit(1)
-      else:
-         params=sys.argv[3:]
+        if len(sys.argv)<5:
+            print "prepAmberGMIN: you must specify an input file, a rule file and a forcefield."
+            print usage
+            exit(1)
+        else:
+            params=sys.argv[3:]
 
     #### SORT RESIDUES
     elif command in ['sortRes', 'sr', 'sR' ,'SR']:
-      if len(sys.argv)<4:
-         print "sortRes: you must specify an input PDB file and a sortfile."
-         print usage
-         exit(1)
-      else:
-         params.append(sys.argv[3])
-         try:
-            vst=open(params[0],'r')
-            vst.close()
-         except:
+        if len(sys.argv)<4:
+            print "sortRes: you must specify an input PDB file and a sortfile."
+            print usage
+            exit(1)
+        else:
+            params.append(sys.argv[3])
             try:
-               testfile=params[0]+'.sort'
-               vst=open(testfile,'r')
-               params[0]=testfile
-               vst.close()
+                vst = open(params[0],'r')
+                vst.close()
             except:
-               print "Unrecognised input filename:"+params[0]+" or "+params[0]+".sort"
-               exit(1)
-      if len(sys.argv)>3:
-         params.append(fileRootFromInfile(infile)+'_sort.pdb')
-      else:
-         params=sys.argv[4]
-      print "sortResidue params: "
-      print params
+                try:
+                    testfile = params[0] + '.sort'
+                    vst = open(testfile,'r')
+                    params[0] = testfile
+                    vst.close()
+                except:
+                    print "Unrecognised input filename:" + params[0] + " or " + params[0] + ".sort"
+                    exit(1)
 
-    #### REMOVE ATOMS
+        if len(sys.argv)>3:
+            params.append( pl.fileRootFromInfile(infile) + '_sort.pdb' )
+        else:
+            params=sys.argv[4]
+
+        print "sortResidue params: "
+        print params
+
+    #### REMOVE ATOMS    
     elif command in ['removeatoms', 'ra']:
-      if len(sys.argv)<4:
-         print "removeatoms: you must specify a rule file and an input PDB file."
-         print usage
-         exit(1)
-      else:
-         params.append(sys.argv[3])
-         try:
-            vst=open(params[0],'r')
-            vst.close()
-         except:
+        if len(sys.argv)<4:
+            print "removeatoms: you must specify a rule file and an input PDB file."
+            print usage
+            exit(1)
+        else:
+            params.append(sys.argv[3])
             try:
-               testfile=params[0]+'.lines'
-               vst=open(testfile,'r')
-               params[0]=testfile
-               vst.close()
+                vst=open(params[0],'r')
+                vst.close()
             except:
-               print "Unrecognised input filename:"+params[0]+" or "+params[0]+".lines"
-               exit(1)
-      if len(sys.argv)==4:
-         params.append(fileRootFromInfile(infile)+'_short.pdb')
-      else:
-         params=sys.argv[4]
-      print "ra params: "
-      print params
+                try:
+                    testfile=params[0]+'.lines'
+                    vst=open(testfile,'r')
+                    params[0]=testfile
+                    vst.close()
+                except:
+                    print "Unrecognised input filename:"+params[0]+" or "+params[0]+".lines"
+                    exit(1)
+        if len(sys.argv)==4:
+            params.append( pl.fileRootFromInfile(infile) + '_short.pdb' )
+        else:
+            params=sys.argv[4]
+            print "ra params: "
+            print params
  
     #### WRITE PUCKER
     elif command in ['writepucker', 'wp']:
-      if len(sys.argv)<4:
-         print "Must specify a pucker state file and an input PDB file."
-         print usage
-         exit(1)
-      else:
-         #mandatory pucker filename
-         params.append(sys.argv[3])
+        if len(sys.argv)<4:
+            print "Must specify a pucker state file and an input PDB file."
+            print usage
+            exit(1)
+        else:
+            #mandatory pucker filename
+            params.append(sys.argv[3])
 
-         #validate pucker filename
-         try:
-            vst=open(params[0],'r')
-            vst.close()
-         except:
+        #validate pucker filename
+        try:
+                vst=open(params[0],'r')
+                vst.close()
+        except:
             try:
-              testfile=params[0]+'.pucker'
-              vst=open(testfile,'r')
-              params[0]=testfile
-              vst.close()
+                testfile = params[0] + '.pucker'
+                vst = open(testfile,'r')
+                params[0]=testfile
+                vst.close()
             except:
-              print "Unrecognised input file name: "+params[0]+" or "+params[0]+".pucker"
-              exit(1)
-         #optional outputfilename
-         if len(sys.argv)==4:
-            params.append(fileRootFromInfile(infile)+'.pucker.pdb')
-         else:
+                print "Unrecognised input file name: " + params[0] + " or " + params[0] + ".pucker"
+                exit(1)
+                
+        #optional outputfilename
+        if len(sys.argv)==4:
+            params.append( pl.fileRootFromInfile(infile)+'.pucker.pdb' )
+        else:
             params.append(sys.argv[4])
 
-         print "wp params: "
-         print params
+        print "wp params: "
+        print params
     else:
-      print "Unrecognised Command"
-      exit(1)
+        print "Unrecognised Command"
+        exit(1)
         
-    return [infile,command,params]
+    return [infile, command, params]
 
 if __name__ == '__main__':
 
-        [infile,command,params]=commandLineProc()
+        [infile, command, params] = commandLineProc()
 
         if command in ['readpucker','rp']:
-            readpucker(infile,params)
+            pl.readpucker(infile,params)
+        
+        elif command in ['fragmentPDB', 'fragmentpdb', 'fpdb', 'fPDB', 'FPDB']:
+            pl.fragmentPDB(infile, params)
+        
+        elif command in ['addTermini', 'addtermini', 'AddTermini', 'at','aT','AT']:
+            pl.addTermini(infile, params)            
+        
+        elif command in ['convertseq', 'ConvertSeq', 'cs', 'cS', 'CS', 'Cs']:
+            pl.convertSequence(infile, params)        
+        
         elif command in ['readchirality','rc','RC','rC','RC']:
-            readchirality(infile,params)
-   	elif command in ['groupAtomsXYZ', 'gAX', 'gax', 'GAX']:
-            groupAtomsXYZ(infile, params)
+            pl.readchirality(infile,params)
+        
+        elif command in ['groupAtomsXYZ', 'gAX', 'gax', 'GAX']:
+            pl.groupAtomsXYZ(infile, params)
+        
         elif command in ['makeXYZForBlender','mXB','mxb']:
-            makeXYZForBlender(infile, params)
+            pl.makeXYZForBlender(infile, params)
+        
         elif command in ['fixchirality','fc','FC','fC','FC']:
-            fixchirality(infile,params)
+            pl.fixchirality(infile,params)
+        
         elif command in ['writepucker','wp']:
-            writepucker(infile,params)
+            pl.writepucker(infile,params)
+        
         elif command in ['removeatoms','ra']:
-            removeLineList(infile,params)
+            pl.removeLineList(infile,params)
+        
         elif command in ['prepAmberGmin','PAG','pAG','pag']:
-            prepAmberGMin(infile,params)
+            pl.prepAmberGMin(infile,params)
+        
+        elif command in ['flipCT', 'fct']:
+            pl.flipCT(infile, params)
+        
         elif command in ['renameTermini','rt','rT','RT']:
-            renameTerminiTop(params[1],infile,int(params[0]))
+            pl.renameTerminiTop(params[1],infile,int(params[0]))
+        
         elif command in ['renumberRes','rn','rN','RN']:
-            renumberResidues(infile,params[0],params[1])
+            pl.renumberResidues(infile,params[0],params[1])
+        
         elif command in ['sortRes','sr','sR','SR']:
-            sortResidues(infile,params[0],params[1])
+            pl.sortResidues(infile,params[0],params[1])
+        
         elif command in ['proToHyp','ph','pH','Ph','PH']:
-            proToHyp(infile,params[0],params[1])
+            pl.proToHyp(infile,params[0],params[1])
+        
         elif command in ['removeDup','rd','rD','Rd','RD']:
-            removeDuplicateAtoms(infile,params[0])
+            pl.removeDuplicateAtoms(infile,params[0])
+        
         elif command in ['checkTorsion','ct','cT','Ct','CT']:
-            checkTorsion(infile,params[0])
+            pl.checkTorsion(infile,params[0])
+        
         elif command in ['torsionDiff','td','tD','Td','TD']:
-            torsionDiff(infile,params[0])
+            pl.torsionDiff(infile,params[0])
+        
         elif command in ['modifySequence','ms','mS','Ms','MS']:
-            modifySequence(infile,params[0],params[1],params[2])
+            pl.modifySequence(infile,params[0],params[1],params[2])
+        
         elif command in ['readSequence','rsq','RSQ']:
-            readSequence(infile,int(params[0]),params[1])
+            pl.readSequence(infile,int(params[0]),params[1])
+        
         elif command in ['puckergroups','pg','pG','Pg','PG']:
-            puckerGroups(infile,params[0],params[1])
+            pl.puckerGroups(infile,params[0],params[1])
+        
         elif command in ['puckergroupSpec','pgs','PGS']:
-            puckerGroupSpec(infile,params[0],params[1],params[2],params[3],params[4])
+            pl.puckerGroupSpec(infile,params[0],params[1],params[2],params[3],params[4])
+        
         elif command in ['puckerGroupsRB','pgrb']:
-            puckerGroupsRB(infile,params[0])
+            pl.puckerGroupsRB(infile,params[0])
+        
         elif command in ['puckerGroupsRBS','pgrbs']:
-            puckerGroupsRBs(infile,params[0],params[1])
+            pl.puckerGroupsRBs(infile,params[0],params[1])
+        
         elif command in ['checkPuckerPattern','cpp','CPP']:
-            checkPuckerPatternWrapper(infile)
+            pl.checkPuckerPatternWrapper(infile)
+        
         elif command in ['residueInfo','RI','Ri','rI','ri']:
-            residueInfo(infile,params[0])
+            pl.residueInfo(infile,params[0])
+        
         elif command in ['puckerBreakDown','PBD','pbd']:
-            puckerBreakDown(infile)           
+            pl.puckerBreakDown(infile)           
+        
         elif command in ['readSymmetry','rs','RS','rS','Rs']:
-            readSymmetry(infile,int(params[0]),int(params[1]),params[2])
+            pl.readSymmetry(infile,int(params[0]),int(params[1]),params[2])
+        
         elif command in ['readResidueSymmetry','rrs','RRS']:
-            readResidueSymmetryWrapper(infile,params[0])
+            pl.readResidueSymmetryWrapper(infile,params[0])
+        
         elif command in ['rotateGroup', 'RG', 'rg']:
-            rotateGroup(infile,params[0],params[1])
+            pl.rotateGroup(infile,params[0],params[1])
+        
         elif command in ['replacePdbXyz', 'xyz2pdb']:
-            replacePdbXYZ(infile,params[0],params[1])
+            pl.replacePdbXYZ(infile,params[0],params[1])
         else:
-            print "Unknown Command: "+command
+            print "Unknown Command: " + command
