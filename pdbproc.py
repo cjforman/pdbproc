@@ -30,6 +30,20 @@ command is one of:
         1 100
         35 39
 
+    eliminateCIS eCIS inpfile
+	Calls the createCT algorithm to check if the lowest energy pdb has no CIS states
+	if it does then it generates a new atomGroups file to spin only the CIS peptide bonds
+        and calls CUDAGMIN for a bunch of steps with CISTRANS checking turned off. 
+	Loops until the lowest energy minimum has no CIS peptide bonds
+       
+
+    generateCTAtomGroups, GCTAG infile
+        takes a initial_cis_trans_state file and creates an atomgroups file for all the CIS peptide bonds. Uses information
+        in the pdb file pointed at by infile to help construct the atomgroups file
+        
+    createCTFile, cCTF inpfile thresh
+        generates a CIS_TRANS_STATE file for a given PDB
+        
     addTermini inpfile N=-30,10 C
         aliases: addTermini, addtermini, AddTermini, at, aT, AT 
         Adds N or C terminus line to PDB (NME, ACE) if N and/or C are present in the params. 
@@ -281,6 +295,24 @@ command is one of:
         else:
             print "fragmentPDB: Must specify inpfile and resflle:  fpdb inpfile resfile"
             exit(1)
+
+    elif command in ['eliminateCIS', 'eCIS']:
+        if len(sys.argv)!=3:
+            print "eCIS: Must specify inpfile:   eCIS inpfile"
+            exit(1)      
+
+    elif command in ['generateCTAtomGroups', 'GCTAG']:
+        if len(sys.argv)!=3:
+            print "GCTAG: Must specify inpfile:   GCTAG inpfile"
+            exit(1)      
+
+    elif command in ['createCTFile', 'cCTF']:
+        if len(sys.argv)==5:
+            params=sys.argv[3:]
+            print "createCTFile params: ", params
+        else:
+            print "createCTFile: Must specify inpfile, CTFile and threshold:   cCTF inpfile initCTFile thresh"
+            exit(1)                  
 
     elif command in ['flipCT', 'fct']:
         if len(sys.argv)!=5:
@@ -689,6 +721,15 @@ if __name__ == '__main__':
         elif command in ['fragmentPDB', 'fragmentpdb', 'fpdb', 'fPDB', 'FPDB']:
             pl.fragmentPDB(infile, params)
         
+        elif command in ['generateCTAtomGroups', 'GCTAG']:
+            pl.generateCTAtomGroups(infile)
+
+        elif command in ['eliminateCIS', 'eCIS']:
+            pl.eliminateCIS(infile)
+
+        elif command in ['createCTFile', 'cCTF']:
+            pl.createCTFile(infile, params)
+
         elif command in ['addTermini', 'addtermini', 'AddTermini', 'at','aT','AT']:
             pl.addTermini(infile, params)            
         

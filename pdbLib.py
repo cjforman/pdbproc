@@ -9,8 +9,7 @@ from mpl_toolkits.mplot3d import proj3d
 import matplotlib.pyplot as plt
 from matplotlib.patches import FancyArrowPatch
 import copy as cp
-import freezeAtoms
-from astropy.wcs.docstrings import name
+import glob
 
 class Arrow3D(FancyArrowPatch):
     def __init__(self, xs, ys, zs, *args, **kwargs):
@@ -22,6 +21,165 @@ class Arrow3D(FancyArrowPatch):
         xs, ys, zs = proj3d.proj_transform(xs3d, ys3d, zs3d, renderer.M)
         self.set_positions((xs[0],ys[0]),(xs[1],ys[1]))
         FancyArrowPatch.draw(self, renderer)
+
+
+# checks a cis_trans_state file for CIS atoms. 
+# Returns a list of GMIN atomic indices of atoms involved in the errant dihedral if there are any.
+def checkFileForCIS(filename):
+    
+    # load the data
+    data = readTextFile(filename)
+    
+    # parse the atom and CTStates from the data
+    atoms = [ line.strip('\r\n') for line in data[0::2] ] 
+    CTStates = [ line.strip('\r\n') for line in data[1::2] ]
+
+    # generate output list
+    outList = []
+    
+    # loop through the data
+    for atom, CTState in zip(atoms, CTStates):
+        # if the state is a CIS state add the atoms in the group to out list as indexes
+        if 'C' in CTState:
+            # atoms vals are the O C N H index in the PDB of the peptide bond always.
+            outList.append([ int(index) for index in atom.split()])
+
+    return outList
+    
+
+def makeAtomGroupsFile(atomList, atoms):
+    outStrings = []
+    for atomGroup in atomList:
+        # atomGroup are the O C N H index in the PDB of the peptide bond always.
+        # Getthe index of the CA in same residue as the Oxygen (atomGroup[0])
+        resValOfTheO = atoms[atomGroup[0] - 1][5]
+        CAIndex = findIndexVal(atoms, 'CA', resValOfTheO)
+        
+        # Create atom group to perform first rotation of the O and C about the N CA axis:
+        name = "group_" + str(resValOfTheO) + "_" + str(atomGroup[0]) + "_1" 
+        outStrings.append( "GROUP " + name + " " + str(atomGroup[2]) + " " + str(CAIndex) + " 2 0.5 1.0\n" )
+        outStrings.append( str(atomGroup[0]) + "\n" )
+        outStrings.append( str(atomGroup[1]) + "\n\n" )
+        
+        # Getthe index of the CA in same residue as the Nitrogen (atomVals[2])
+        resValOfTheN = atoms[atomGroup[2] - 1][5]
+        CAIndex = findIndexVal(atoms, 'CA', resValOfTheN)
+        
+        # create the atom group for the second rotation of the N and H about the C CA axis:
+        name = "group_" + str(resValOfTheO) + "_" + str(atomGroup[0]) + "_2"
+        outStrings.append( "GROUP " + name + " " + str(atomGroup[1]) + " " + str(CAIndex) + " 2 0.5 1.0\n" )
+        outStrings.append( str(atomGroup[2]) + "\n" )
+        outStrings.append( str(atomGroup[3]) + "\n\n" )
+        
+    writeTextFile(outStrings, "atomgroups")
+
+
+def findBestCoords(globMask):
+    # get a glob of all pdb files
+    pdbFiles = glob.glob(globMask)
+
+    # create a CT file for every coords.x.pdb and record the number of CIS states in each PDB in a list. 
+    # use the initial_cis_trans_states file as a template for peptide bonds and a threshold of 30 for cis
+    numCStates = [ createCTFile(filename, ["initial_cis_trans_states", 30.0]) for filename in pdbFiles ]
+
+    minCStateIndex = numCStates.index(min(numCStates))
+
+    return numCStates[minCStateIndex], pdbFiles[minCStateIndex]
+
+
+
+def eliminateCIS(infile):    
+    # load the molecular info from the canon pdb.
+    canonicalPdbAtoms = readAllAtoms(infile)
+
+    # find the pdb with the lowest number of cis 
+    lowestNumCis, lowestPdb = findBestCoords("coords.*.pdb")
+ 
+    # keep the lowest pdb
+    os.system("cp " + lowestPdb + " lowest.pdb")
+    os.system("cp " + lowestPdb[0:-4] + ".rst lowest.rst")
+    os.system("cp " + lowestPdb + ".ct lowest.ct")
+
+    # loop while there isn't a minimum with zero cis states
+    while lowestNumCis>0:
+
+        # always start each run with the lowest inpcrds yet
+        os.system("cp lowest.rst coords.inpcrd")
+
+        # get the list of atoms that are in the cis state in the lowest coords file
+        lowestCISAtomgroupsList = checkFileForCIS("lowest.ct")
+
+        # make an atomGroups file for those cis bonds only. use the canonical pdb to help out but any pdb would do.
+        makeAtomGroupsFile(lowestCISAtomgroupsList, canonicalPdbAtoms)
+
+        print "Calling CUDAGMIN"
+
+        # call the CUDAGMIN operation. The current atoms groups will try to spin a bunch of times.
+        os.system( "CUDAGMIN" )
+
+        # find the pdb with the lowest number of cis 
+        newLowestNumCis, newLowestPdb = findBestCoords("coords.*.pdb")
+ 
+        # check to see if the pdb with the lowest number of cis is lower than the current lowest
+        if newLowestNumCis < lowestNumCis:
+            # if so then keep it.
+            lowestNumCis = newLowestNumCis
+           
+            os.system("cp " + newLowestPdb + " lowest.pdb")
+            os.system("cp " + newLowestPdb[0:-4] + ".rst lowest.rst")
+            os.system("cp " + lowestPdb + ".ct lowest.ct")
+
+            print "lowest on this run: " + str(newLowestNumCis) + " lowest so far: " + str(lowestNumCis)
+
+
+def createCTFile(infile, params):
+    
+    pdbAtoms = readAllAtoms(infile)
+    
+    # load the data
+    initCTFile = readTextFile(params[0])
+
+
+    # parse the atom and CTStates from the data
+    peptideBondAtomsList = [ line for line in initCTFile[0::2] ] 
+
+    # generate output list
+    outList = []
+ 
+
+    # initialise counter to count the c states
+    c_Count = 0
+   
+    # loop through the peptide bonds;  O C N H in the order of.
+    for peptideBondAtoms in peptideBondAtomsList:
+        atomIndices = [ int(val) for val in peptideBondAtoms.strip('\r\n').split() ]
+        OAtom = pdbAtoms[atomIndices[0] - 1]
+        CAtom = pdbAtoms[atomIndices[1] - 1]
+        NAtom = pdbAtoms[atomIndices[2] - 1]
+        HAtom = pdbAtoms[atomIndices[3] - 1]
+        OVec = np.array([ OAtom[7], OAtom[8], OAtom[9] ] )
+        CVec = np.array([ CAtom[7], CAtom[8], CAtom[9] ] )
+        NVec = np.array([ NAtom[7], NAtom[8], NAtom[9] ] )
+        HVec = np.array([ HAtom[7], HAtom[8], HAtom[9] ] )        
+
+        dihedral = computeDihedral(OVec, CVec, NVec, HVec)[0]
+
+        bondState = ' N'
+        if np.abs(dihedral)<float(params[1]):
+            bondState = ' C'
+            c_Count += 1
+        if np.abs(dihedral)> (180.0 - float(params[1])):
+            bondState = ' T'
+
+        outList.append(peptideBondAtoms)
+        #outList.append(bondState + " " + str(dihedral) + '\n')
+        outList.append(bondState + '\n')
+
+    writeTextFile(outList, infile + '.ct')
+                
+    return c_Count
+
+
 
 # pinched these next few functions from Utilities. COuoldn't get all the different versions of python to talk to Utilities. Whatever.  
 
@@ -1093,7 +1251,7 @@ def readTextFile(filename):
     vst.close()
     return lines
 
-def writeTextFile(lines,filename):
+def writeTextFile(lines, filename):
     #write line data to file
     try:
         vst = open(filename, 'w')
@@ -3966,7 +4124,6 @@ def checkchirality(atoms, fix_chirality=False):
                         
                         # Invert the residue in the plane formed by the N, C and CA planes.
                         N_C = CPOS - NPOS
-                        N_CA = CAPOS - NPOS
                         normal = np.cross(N_C, N_CA)
                         normal = normal / np.linalg.norm(normal)
                         invert_atoms_in_plane(curResidue, NPOS, normal)
