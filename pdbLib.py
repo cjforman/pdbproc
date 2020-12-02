@@ -23,6 +23,28 @@ class Arrow3D(FancyArrowPatch):
         FancyArrowPatch.draw(self, renderer)
 
 
+def generateRigidBodyInput(infile, Cis_Trans_File):
+
+    # load the pdb file and dump as a coordsinirigid file
+    atoms = readAllAtoms(infile)
+    outlist= []
+    for atom in atoms:
+	outlist.append(str(atom[7]) + " " + str(atom[8]) + " " + str(atom[9]) + "\n")
+    writeTextFile(outlist, "coordsinirigid")
+    outlist = []
+
+    # use the cis trans infor to generate a set of rigid body groups
+    peptideBondGroupList = [ [int(val) for val in PBG.strip('\r\n').split()] for PBG in readTextFile(Cis_Trans_File)[0::2] ]
+
+    for rigidBodyGroup in peptideBondGroupList:
+	outlist.append( "GROUP " + str( len( rigidBodyGroup ) ) + "\n" )
+	for atomIndex in rigidBodyGroup:
+	    outlist.append( str( atomIndex ) + "\n" )
+	outlist.append("\n")
+
+    writeTextFile(outlist, "rbodyconfig")
+
+
 # checks a cis_trans_state file for CIS atoms. 
 # Returns a list of GMIN atomic indices of atoms involved in the errant dihedral if there are any.
 def checkFileForCIS(filename):
@@ -79,7 +101,8 @@ def findBestCoords(globMask):
     pdbFiles = glob.glob(globMask)
 
     # create a CT file for every coords.x.pdb and record the number of CIS states in each PDB in a list. 
-    # use the initial_cis_trans_states file as a template for peptide bonds and a threshold of 30 for cis
+    # use the initial_cis_trans_states file as a template for peptide bonds and a threshold of 30 degrees to 
+    # define what constitutes a window around a cis bond
     numCStates = [ createCTFile(filename, ["initial_cis_trans_states", 30.0]) for filename in pdbFiles ]
 
     minCStateIndex = numCStates.index(min(numCStates))
@@ -103,16 +126,16 @@ def eliminateCIS(infile):
     # loop while there isn't a minimum with zero cis states
     while lowestNumCis>0:
 
-        # always start each run with the lowest inpcrds yet
-        os.system("cp lowest.rst coords.inpcrd")
+    	# always start each run with the lowest inpcrds yet
+	os.system("cp lowest.rst coords.inpcrd")
 
         # get the list of atoms that are in the cis state in the lowest coords file
         lowestCISAtomgroupsList = checkFileForCIS("lowest.ct")
 
-        # make an atomGroups file for those cis bonds only. use the canonical pdb to help out but any pdb would do.
-        makeAtomGroupsFile(lowestCISAtomgroupsList, canonicalPdbAtoms)
+	# make an atomGroups file for those cis bonds only. use the canonical pdb to help out but any pdb would do.
+	makeAtomGroupsFile(lowestCISAtomgroupsList, canonicalPdbAtoms)
 
-        print "Calling CUDAGMIN"
+	print "Calling CUDAGMIN"
 
         # call the CUDAGMIN operation. The current atoms groups will try to spin a bunch of times.
         os.system( "CUDAGMIN" )
@@ -120,16 +143,16 @@ def eliminateCIS(infile):
         # find the pdb with the lowest number of cis 
         newLowestNumCis, newLowestPdb = findBestCoords("coords.*.pdb")
  
-        # check to see if the pdb with the lowest number of cis is lower than the current lowest
-        if newLowestNumCis < lowestNumCis:
+	# check to see if the pdb with the lowest number of cis is lower than the current lowest
+	if newLowestNumCis < lowestNumCis:
             # if so then keep it.
-            lowestNumCis = newLowestNumCis
+	    lowestNumCis = newLowestNumCis
            
             os.system("cp " + newLowestPdb + " lowest.pdb")
             os.system("cp " + newLowestPdb[0:-4] + ".rst lowest.rst")
             os.system("cp " + lowestPdb + ".ct lowest.ct")
 
-            print "lowest on this run: " + str(newLowestNumCis) + " lowest so far: " + str(lowestNumCis)
+	print "lowest on this run: " + str(newLowestNumCis) + " lowest so far: " + str(lowestNumCis)
 
 
 def createCTFile(infile, params):
