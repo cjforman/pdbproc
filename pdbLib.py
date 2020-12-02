@@ -56,7 +56,7 @@ def makeAtomGroupsFile(atomList, atoms):
         CAIndex = findIndexVal(atoms, 'CA', resValOfTheO)
         
         # Create atom group to perform first rotation of the O and C about the N CA axis:
-        name = "group_" + str(resValOfTheO) + "_" + str(atomGroup[0]) + "_1" 
+        name = str(resValOfTheO) + "_" + str(atomGroup[0]) + "_1" 
         outStrings.append( "GROUP " + name + " " + str(atomGroup[2]) + " " + str(CAIndex) + " 2 0.5 1.0\n" )
         outStrings.append( str(atomGroup[0]) + "\n" )
         outStrings.append( str(atomGroup[1]) + "\n\n" )
@@ -66,7 +66,7 @@ def makeAtomGroupsFile(atomList, atoms):
         CAIndex = findIndexVal(atoms, 'CA', resValOfTheN)
         
         # create the atom group for the second rotation of the N and H about the C CA axis:
-        name = "group_" + str(resValOfTheO) + "_" + str(atomGroup[0]) + "_2"
+        name = str(resValOfTheO) + "_" + str(atomGroup[0]) + "_2"
         outStrings.append( "GROUP " + name + " " + str(atomGroup[1]) + " " + str(CAIndex) + " 2 0.5 1.0\n" )
         outStrings.append( str(atomGroup[2]) + "\n" )
         outStrings.append( str(atomGroup[3]) + "\n\n" )
