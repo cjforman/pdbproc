@@ -272,7 +272,7 @@ command is one of:
     
     # process command line params
     if len(sys.argv) < 3:
-        print usage
+        print(usage)
         sys.exit(1)
     else:
         command=sys.argv[1]
@@ -288,66 +288,66 @@ command is one of:
             infile=testfile
             vst.close()
         except:
-            print "Unrecognised input file name: "+infile+" or "+infile+".pdb"
+            print("Unrecognised input file name: "+infile+" or "+infile+".pdb")
             exit(1)
 
-    print "Command: " + command
-    print "infile: " + infile
+    print("Command: " + command)
+    print("infile: " + infile)
 
     # fragmentPDB or fpdb inpfile resfile
     if command in ['fragmentPDB', 'fragmentpdb', 'fpdb', 'fPDB', 'FPDB']:
         if len(sys.argv)==4:
             params=sys.argv[3]
-            print "fpdb params: ", params
+            print("fpdb params: ", params)
         else:
-            print "fragmentPDB: Must specify inpfile and resflle:  fpdb inpfile resfile"
+            print("fragmentPDB: Must specify inpfile and resflle:  fpdb inpfile resfile")
             exit(1)
             
     elif command in [ 'centrePDB', 'CPDB', 'cPDB', 'cpdb']:
         if len(sys.argv)!=3:
-            print "cPDB: Must specify inpfile:  cPDB inpfile"
+            print("cPDB: Must specify inpfile:  cPDB inpfile")
             exit(1)
             
     elif command in ['eliminateCIS', 'eCIS']:
         if len(sys.argv)!=3:
-            print "eCIS: Must specify inpfile:   eCIS inpfile"
+            print("eCIS: Must specify inpfile:   eCIS inpfile")
             exit(1)      
 
     elif command in ['generateCTAtomGroups', 'GCTAG']:
         if len(sys.argv)!=3:
-            print "GCTAG: Must specify inpfile:   GCTAG inpfile"
+            print("GCTAG: Must specify inpfile:   GCTAG inpfile")
             exit(1)      
 
     elif command in ['createCTFile', 'cCTF']:
         if len(sys.argv)==5:
             params=sys.argv[3:]
-            print "createCTFile params: ", params
+            print("createCTFile params: ", params)
         else:
-            print "createCTFile: Must specify inpfile, CTFile and threshold:   cCTF inpfile initCTFile thresh"
+            print("createCTFile: Must specify inpfile, CTFile and threshold:   cCTF inpfile initCTFile thresh")
             exit(1)                  
 
     elif command in ['flipCT', 'fct']:
         if len(sys.argv)!=5:
-            print "flipCT: Must specify inpfile, cistrans file and a force field:  fct inpfile cistran forcefield"
+            print("flipCT: Must specify inpfile, cistrans file and a force field:  fct inpfile cistran forcefield")
             exit(1)
         params = sys.argv[3:]         
     
     elif command in ['convertseq', 'ConvertSeq', 'cs', 'cS', 'CS', 'Cs']:
         if len(sys.argv)!=4:
-            print "convertseq: Must specify inpfile and seq flle:  cs inpfile seqfile"
+            print("convertseq: Must specify inpfile and seq flle:  cs inpfile seqfile")
             exit(1)
         params = sys.argv[3]         
         
     # addTermini or at inpfile N(100,00) C
     elif command in ['addTermini', 'addtermini', 'AddTermini', 'at','aT','AT']:
         if (len(sys.argv)<3) or (len(sys.argv)>5):
-            print "addTermini: Must specify inpfile and up to two termini (angles are optional). format N=a,b C=a,b "
+            print("addTermini: Must specify inpfile and up to two termini (angles are optional). format N=a,b C=a,b ")
             exit(1)
         if len(sys.argv)==4:            
             params = [ sys.argv[3] ]
         if len(sys.argv)==5:
             params = sys.argv[3:]
-        print "add termini params: ", params
+        print("add termini params: ", params)
     
     # READ PUCKER
     elif command in ['readpucker', 'rp']:
@@ -356,11 +356,11 @@ command is one of:
             params = params+'.pucker'
         else:
             params=sys.argv[3]
-        print "rp params: ", params
+        print("rp params: ", params)
 
     # check pucker pattern
     elif command in ['checkPuckerPattern', 'cpp', 'CPP']:
-        print 'No Params for check Pucker Pattern'
+        print('No Params for check Pucker Pattern')
         # no params allowed for this command
 
     # Read Chirality
@@ -370,7 +370,7 @@ command is one of:
             params = params + '.chi'
         else:
             params=sys.argv[3]
-        print "rc params: " + params
+        print("rc params: " + params)
 
     # group atoms
     elif command in ['groupAtomsXYZ', 'gAX', 'gax', 'GAX']:
@@ -379,7 +379,7 @@ command is one of:
             params = params + '.xyz'
         else:
             params = sys.argv[3]
-        print "gax params: " + params
+        print("gax params: " + params)
 
     # make xyz for blender
     elif command in ['makeXYZForBlender', 'mXB', 'mxb']:
@@ -391,9 +391,9 @@ command is one of:
         elif len(sys.argv)==5:
             params = [ int(sys.argv[3]), int(sys.argv[4]), outfile ]
         else:
-            print usage
+            print(usage)
             sys.exit()
-        print "mXB params: ", params
+        print("mXB params: ", params)
 
     # Fix Chirality
     elif command in ['fixchirality', 'fc', 'FC','fC','Fc']:
@@ -402,19 +402,19 @@ command is one of:
             params = params + '_chi.pdb'
         else:
             params = sys.argv[3]
-        print "fc params: " + params
+        print("fc params: " + params)
 
     # ramachandran 
     elif command in ['ramachandran', 'rmc']:
         params = [ pl.fileRootFromInfile(infile)+'.gplt' ]
         params.append(pl.fileRootFromInfile(infile)+'.rama')
         
-        print "ramachandran plot command not implemented: ", params
+        print("ramachandran plot command not implemented: ", params)
 
     #replace pdb with xyz data
     elif command in ['replacePdbXyz','xyz2pdb']:
         if len(sys.argv)<4:
-            print "ReplacePdbXyz usage: pdbproc.py xyz2pdb inpfile xyzfile [outfile]"
+            print("ReplacePdbXyz usage: pdbproc.py xyz2pdb inpfile xyzfile [outfile]")
             sys.exit(0)
         elif (len(sys.argv)==4):
             params=[sys.argv[3]]
@@ -422,13 +422,13 @@ command is one of:
         elif (len(sys.argv)>4):
             params=sys.argv[3:5]
 
-        print "xyz2pdb command: "
-        print params
+        print("xyz2pdb command: ")
+        print(params)
 
     #Rotate groups
     elif command in ['rotateGroup', 'RG', 'rg']:
         if len(sys.argv)<4:
-            print "Rotate group usage: pdbproc.py rotateGroup inpfile atomgroups [outfile]"
+            print("Rotate group usage: pdbproc.py rotateGroup inpfile atomgroups [outfile]")
             sys.exit(0)
         elif (len(sys.argv)==4):
             params = [ sys.argv[3] ]
@@ -436,8 +436,8 @@ command is one of:
         elif (len(sys.argv)>4):
             params = sys.argv[3:5]
 
-        print "rotateGroup command: "
-        print params
+        print("rotateGroup command: ")
+        print(params)
 
     ##Read Symmetry
     elif command in ['readSymmetry', 'rs', 'RS','rS','Rs']:
@@ -464,18 +464,18 @@ command is one of:
                     params.append( sys.argv[5] )
 
                     
-        print ["read symmetry params: "] 
-        print params
+        print(["read symmetry params: "]) 
+        print(params)
 
     ##Pucker State Summary; has no command parameter processing; just has an infile
     elif command in ['puckerBreakDown', 'PBD', 'pbs']:
-        print "pucker break down invoked"
+        print("pucker break down invoked")
  
     #### Convert Proline to HydroxyProline
     elif command in ['proToHyp','PH','pH','Ph','ph']:
         if len(sys.argv)<4:
-            print "proToHyp: you must specify an input pdb file and a file with a list of residue to convert, and an optional output file"
-            print usage
+            print("proToHyp: you must specify an input pdb file and a file with a list of residue to convert, and an optional output file")
+            print(usage)
             sys.exit(1)
         elif len(sys.argv)==5:
             params = sys.argv[2:]
@@ -487,7 +487,7 @@ command is one of:
     #### read Sequence
     elif command in ['readSequence','rsq','RSQ']:
         if len(sys.argv)<4:
-            print "readSequence input.pdb mode [width]"
+            print("readSequence input.pdb mode [width]")
             exit(1)
         elif len(sys.argv)==4: 
             params=[sys.argv[3]]
@@ -498,13 +498,13 @@ command is one of:
         l = "readSequence params: "
         for p in params:
             l = l + str(p) + ' '
-        print l
+        print(l)
 
     #### Replace Sequence
     elif command in ['modifySequence','MS','mS','Ms','ms']:
         if len(sys.argv)<5:
-            print "modifySequence input.pdb newSeq resNumStart [output.pdb]"
-            print usage
+            print("modifySequence input.pdb newSeq resNumStart [output.pdb]")
+            print(usage)
             exit(1)
         elif len(sys.argv)==6:
             params=sys.argv[3:]
@@ -515,8 +515,8 @@ command is one of:
     #### RENAME TERMINI
     elif command in ['renameTermini','rt','rT','RT']:
         if len(sys.argv)<4:
-            print "renameTermini: you must specify an input pdb file, and a flag"
-            print usage
+            print("renameTermini: you must specify an input pdb file, and a flag")
+            print(usage)
             exit(1)
         elif len(sys.argv)==5:
             params = sys.argv[2:]
@@ -535,7 +535,7 @@ command is one of:
         elif len(sys.argv)==5:
             params.append(sys.argv[3])
             params.append(sys.argv[4])
-        print 'renumberRes', params
+        print('renumberRes', params)
 
     #### removeDuplicates
     elif command in ['removeDup','rd','RD','rD']:
@@ -544,7 +544,7 @@ command is one of:
             params.append(sys.argv[3])
         else:
             params.append( pl.fileRootFromInfile(infile) + '_noDup.pdb' )
-        print 'removeDup', params
+        print('removeDup', params)
 
     #### Read Residue Symmetry
     elif command in ['readResidueSymmetry','rrs','RRS']:
@@ -553,7 +553,7 @@ command is one of:
             params.append(sys.argv[3])
         else:
             params.append( pl.fileRootFromInfile(infile) + '.resSym' )
-        print 'removeDup', params
+        print('removeDup', params)
 
     #### checkTorsion
     elif command in ['checkTorsion','ct','cT','Ct','CT']:
@@ -562,7 +562,7 @@ command is one of:
             params.append( sys.argv[3] )
         else:
             params.append( pl.fileRootFromInfile(infile) + '.torsion' )
-        print 'checkTorsion', params
+        print('checkTorsion', params)
 
     #### residueInfo    
     elif command in ['residueInfo','RI','Ri','rI','ri']:
@@ -571,7 +571,7 @@ command is one of:
             params.append( sys.argv[3] )
         else:
             params.append( pl.fileRootFromInfile(infile) + '.residue' )
-        print 'residueInfo', params
+        print('residueInfo', params)
 
 
     #### torsionDiff
@@ -581,7 +581,7 @@ command is one of:
             params.append(sys.argv[3])
         else:
             params.append('diff.torsion')
-        print 'torsionDiff', params
+        print('torsionDiff', params)
 
     #### puckerGroupsRigidBody
     elif command in ['puckerGroupsRB','pgrb']:
@@ -592,8 +592,8 @@ command is one of:
     elif command in ['puckerGroupsRBS','pgrbs']:
         #check for an outputfile
         if len(sys.argv)<3:
-            print "Usage: puckerGroupsRBS <inpfile.pdb> <resnumbersFile>"
-            print usage
+            print("Usage: puckerGroupsRBS <inpfile.pdb> <resnumbersFile>")
+            print(usage)
             exit(1)
         else:
             params.append(sys.argv[3])
@@ -617,8 +617,8 @@ command is one of:
     elif command in ['puckergroupSpec','pgs','PGS']:
         #check for an outputfile
         if len(sys.argv)<7:
-            print "Usage: puckergroupSpec <inpfile.pdb> <resnumbersFile> <OHFlag> <scaleFac> <probRot> [<outputfile>]"
-            print usage
+            print("Usage: puckergroupSpec <inpfile.pdb> <resnumbersFile> <OHFlag> <scaleFac> <probRot> [<outputfile>]")
+            print(usage)
             exit(1)
         else:
             params=sys.argv[3:]
@@ -628,8 +628,8 @@ command is one of:
     #### PREP FOR AMBERGMIN
     elif command in ['prepAmberGmin','pag','PAG','pAG']:
         if len(sys.argv)<5:
-            print "prepAmberGMIN: you must specify an input file, a rule file and a forcefield."
-            print usage
+            print("prepAmberGMIN: you must specify an input file, a rule file and a forcefield.")
+            print(usage)
             exit(1)
         else:
             params=sys.argv[3:]
@@ -637,8 +637,8 @@ command is one of:
     #### SORT RESIDUES
     elif command in ['sortRes', 'sr', 'sR' ,'SR']:
         if len(sys.argv)<4:
-            print "sortRes: you must specify an input PDB file and a sortfile."
-            print usage
+            print("sortRes: you must specify an input PDB file and a sortfile.")
+            print(usage)
             exit(1)
         else:
             params.append(sys.argv[3])
@@ -652,7 +652,7 @@ command is one of:
                     params[0] = testfile
                     vst.close()
                 except:
-                    print "Unrecognised input filename:" + params[0] + " or " + params[0] + ".sort"
+                    print("Unrecognised input filename:" + params[0] + " or " + params[0] + ".sort")
                     exit(1)
 
         if len(sys.argv)>3:
@@ -660,14 +660,14 @@ command is one of:
         else:
             params=sys.argv[4]
 
-        print "sortResidue params: "
-        print params
+        print("sortResidue params: ")
+        print(params)
 
     #### REMOVE ATOMS    
     elif command in ['removeatoms', 'ra']:
         if len(sys.argv)<4:
-            print "removeatoms: you must specify a rule file and an input PDB file."
-            print usage
+            print("removeatoms: you must specify a rule file and an input PDB file.")
+            print(usage)
             exit(1)
         else:
             params.append(sys.argv[3])
@@ -681,20 +681,20 @@ command is one of:
                     params[0]=testfile
                     vst.close()
                 except:
-                    print "Unrecognised input filename:"+params[0]+" or "+params[0]+".lines"
+                    print("Unrecognised input filename:"+params[0]+" or "+params[0]+".lines")
                     exit(1)
         if len(sys.argv)==4:
             params.append( pl.fileRootFromInfile(infile) + '_short.pdb' )
         else:
             params=sys.argv[4]
-            print "ra params: "
-            print params
+            print("ra params: ")
+            print(params)
  
     #### WRITE PUCKER
     elif command in ['writepucker', 'wp']:
         if len(sys.argv)<4:
-            print "Must specify a pucker state file and an input PDB file."
-            print usage
+            print("Must specify a pucker state file and an input PDB file.")
+            print(usage)
             exit(1)
         else:
             #mandatory pucker filename
@@ -711,7 +711,7 @@ command is one of:
                 params[0]=testfile
                 vst.close()
             except:
-                print "Unrecognised input file name: " + params[0] + " or " + params[0] + ".pucker"
+                print("Unrecognised input file name: " + params[0] + " or " + params[0] + ".pucker")
                 exit(1)
                 
         #optional outputfilename
@@ -720,10 +720,10 @@ command is one of:
         else:
             params.append(sys.argv[4])
 
-        print "wp params: "
-        print params
+        print("wp params: ")
+        print(params)
     else:
-        print "Unrecognised Command"
+        print("Unrecognised Command")
         exit(1)
         
     return [infile, command, params]
@@ -843,4 +843,4 @@ if __name__ == '__main__':
         elif command in ['replacePdbXyz', 'xyz2pdb']:
             pl.replacePdbXYZ(infile,params[0],params[1])
         else:
-            print "Unknown Command: " + command
+            print("Unknown Command: " + command)

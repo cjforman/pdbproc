@@ -1,12 +1,8 @@
 #!/usr/bin/env python
 import sys, os
 import numpy as np
-from scipy.optimize import fmin_l_bfgs_b
-import string as strg
-import math as mth
 from itertools import chain
 from mpl_toolkits.mplot3d import proj3d
-import matplotlib.pyplot as plt
 from matplotlib.patches import FancyArrowPatch
 import copy as cp
 import glob
@@ -173,16 +169,16 @@ def eliminateCIS(infile):
     # loop while there isn't a minimum with zero cis states
     while lowestNumCis>0:
 
-    	# always start each run with the lowest inpcrds yet
-	os.system("cp lowest.rst coords.inpcrd")
+    # always start each run with the lowest inpcrds yet
+    os.system("cp lowest.rst coords.inpcrd")
 
         # get the list of atoms that are in the cis state in the lowest coords file
         lowestCISAtomgroupsList = checkFileForCIS("lowest.ct")
 
-	# make an atomGroups file for those cis bonds only. use the canonical pdb to help out but any pdb would do.
-	makeAtomGroupsFile(lowestCISAtomgroupsList, canonicalPdbAtoms)
+    # make an atomGroups file for those cis bonds only. use the canonical pdb to help out but any pdb would do.
+    makeAtomGroupsFile(lowestCISAtomgroupsList, canonicalPdbAtoms)
 
-	print "Calling CUDAGMIN"
+    print("Calling CUDAGMIN")
 
         # call the CUDAGMIN operation. The current atoms groups will try to spin a bunch of times.
         os.system( "CUDAGMIN" )
@@ -190,16 +186,16 @@ def eliminateCIS(infile):
         # find the pdb with the lowest number of cis 
         newLowestNumCis, newLowestPdb = findBestCoords("coords.*.pdb")
  
-	# check to see if the pdb with the lowest number of cis is lower than the current lowest
-	if newLowestNumCis < lowestNumCis:
+    # check to see if the pdb with the lowest number of cis is lower than the current lowest
+    if newLowestNumCis < lowestNumCis:
             # if so then keep it.
-	    lowestNumCis = newLowestNumCis
+        lowestNumCis = newLowestNumCis
            
             os.system("cp " + newLowestPdb + " lowest.pdb")
             os.system("cp " + newLowestPdb[0:-4] + ".rst lowest.rst")
             os.system("cp " + lowestPdb + ".ct lowest.ct")
 
-	print "lowest on this run: " + str(newLowestNumCis) + " lowest so far: " + str(lowestNumCis)
+    print("lowest on this run: " + str(newLowestNumCis) + " lowest so far: " + str(lowestNumCis))
 
 
 def createCTFile(infile, params):
@@ -344,11 +340,11 @@ def groupAtomsXYZ(infile, outfile):
         elif 'P' in atom[1]:
             atom[1] ='P' 
         else:
-            print 'Unrecognised atom', atom[1], ' line:', atom[0]
+            print('Unrecognised atom', atom[1], ' line:', atom[0])
             atom[1] ='Pb' # dark grey
 
     writeXYZ(atoms, outfile)
-    print 'Done'
+    print('Done')
     return          
 
 
@@ -387,7 +383,7 @@ def makeXYZForBlender(infile, backboneOnly, resMode, outfile):
             elif atom[3] in ['Imb', 'Ime', 'Imc']:
                 atom[1] ='Ca' # make the PLP backbones some color
             else:
-                print 'Unrecognised residue name:', atom[3], ' line:', atom[0]
+                print('Unrecognised residue name:', atom[3], ' line:', atom[0])
                 atom[1] ='Pb' # dark grey
 
     if resMode==1:
@@ -440,12 +436,12 @@ def makeXYZForBlender(infile, backboneOnly, resMode, outfile):
             elif atom[3] in ['Imb', 'Ime', 'Imc']:
                 atom[1] ='As'
             else:
-                print 'Unrecognised residue name:', atom[3], ' line:', atom[0]
+                print('Unrecognised residue name:', atom[3], ' line:', atom[0])
                 atom[1] ='Pb' # dark grey
 
 
     writeXYZ(atom2XYZ, outfile)
-    print 'Done'
+    print('Done')
     return          
 
 def writeXYZ(atoms, outfile):
@@ -514,7 +510,7 @@ def replacePdbAtoms(infile, newCoords, outfile, pdb=None, atoms=None):
 
     # check the lists are compatible
     if len(atoms)!=len(newCoords):
-        print "atom lists incompatible sizes" 
+        print("atom lists incompatible sizes") 
         sys.exit(0)
 
 
@@ -533,7 +529,7 @@ def replacePdbAtoms(infile, newCoords, outfile, pdb=None, atoms=None):
             try:
                 atom = parsePdbLine(newLine)
             except:
-                print "line: " + line + " not understood"
+                print( "line: " + line + " not understood")
                 exit(0)
             # replace the coords
             atom[7] = newCoords[curCoord][0]
@@ -565,7 +561,7 @@ def replaceAtoms(atoms, newCoords):
     ''' Replaces the atomic coords in the atoms array with a new set of coords.'''
 
     if len(atoms)!=len(newCoords):
-        print "atom lists incompatible sizes" 
+        print("atom lists incompatible sizes")
         sys.exit(0)
 
     newAtoms=[]
@@ -681,7 +677,7 @@ def rotateGroup(infile,atomGroupsFilename,outfile):
     '''Function reads in the atoms groups data and rotates each group about the axis defined in that group by a set angle.
        The new coords are then written down.  The groups are processed in the order they appear in the atomgroups file.
        The numbers in the atom groups file refer to the order the atoms appear in the pdb'''
-    print outfile
+    print(outfile)
     # read in the atoms from a the file
     atoms = readAllAtoms(infile)
 
@@ -704,7 +700,7 @@ def extractCoords(atoms):
 
 def torsionDiff(indirectory, outfile):
     # in the current directory find the lowestN.1.pdb files
-    print indirectory, outfile
+    print(indirectory, outfile)
 
     # for each pdb file compute the torsion
 
@@ -763,15 +759,15 @@ def computePuckerAndChi(res):
     
     #debug information both puckers should be the same.
     if pucker1!=puckerChi:
-        print pucker1, puckerChi, chi[0]
-        print res
+        print(pucker1, puckerChi, chi[0])
+        print(res)
     
     return [pucker1,chi]
 
 def computeChi(res):
 
 #extract the relevant information from the residues and present as position vectors of atoms.
-    C=[np.array([atom[7],atom[8],atom[9]]) for atom in res if atom[1]=='C'][0]
+    # C=[np.array([atom[7],atom[8],atom[9]]) for atom in res if atom[1]=='C'][0]
     N=[np.array([atom[7],atom[8],atom[9]]) for atom in res if atom[1]=='N'][0]
     CA=[np.array([atom[7],atom[8],atom[9]]) for atom in res if atom[1]=='CA'][0]
     CB=[np.array([atom[7],atom[8],atom[9]]) for atom in res if atom[1]=='CB'][0]
@@ -806,15 +802,15 @@ def computeChi(res):
     chi5 = computeDihedral(CD,N,CA,CB)
      
     if chi1[1]==1:
-        print 'N,CA,CB,CG are colinear in residue: '+str(res[0][5])
+        print('N,CA,CB,CG are colinear in residue: '+str(res[0][5]))
     if chi2[1]==1:
-        print 'CA,CB,CG, CD are colinear in residue: '+str(res[0][5])
+        print('CA,CB,CG, CD are colinear in residue: '+str(res[0][5]))
     if chi3[1]==1:
-        print 'CB,CG,CD,N are colinear in residue: '+str(res[0][5])
+        print('CB,CG,CD,N are colinear in residue: '+str(res[0][5]))
     if chi4[1]==1:
-        print 'CG,CD,N,CA are colinear in residue: '+str(res[0][5])
+        print('CG,CD,N,CA are colinear in residue: '+str(res[0][5]))
     if chi5[1]==1:
-        print 'CD,N,CA,CB are colinear in residue: '+str(res[0][5])
+        print('CD,N,CA,CB are colinear in residue: '+str(res[0][5]))
 
     return [chi1[0],chi2[0],chi3[0],chi4[0],chi5[0]]
 
@@ -845,11 +841,11 @@ def computeTorsion(res0,res1,res2):
         omega = [0.0, 0]
         
     if phi[1]==1:
-        print 'C0,N1 and CA1 are colinear in residue: '+str(res1[0][5])
+        print('C0,N1 and CA1 are colinear in residue: '+str(res1[0][5]))
     if psi[1]==1:
-        print 'CA1, C1 and N2 are colinear in residue: '+str(res1[0][5])
+        print('CA1, C1 and N2 are colinear in residue: '+str(res1[0][5]))
     if omega[1]==1:
-        print 'C1, N2 and CA2 are colinear in residue: '+str(res1[0][5])
+        print('C1, N2 and CA2 are colinear in residue: '+str(res1[0][5]))
     return [phi[0],psi[0],omega[0]]
 
 #Yings definition of torsion angles
@@ -986,14 +982,14 @@ def puckerBreakDown(infile):
     
     Total = TotalX+TotalY
     
-    print "numXProlineEndo: ",str(numXProEndo), "  Total %age: "+str(float(numXProEndo)/float(Total))
-    print "numXProlineExo: ",str(numXProExo), "  Total %age: "+str(float(numXProExo)/float(Total))
-    print "numYProlineEndo: ",str(numYProEndo), "  Total %age: "+str(float(numYProEndo)/float(Total))
-    print "numYProlineExo: ",str(numYProExo), "  Total %age: "+str(float(numYProExo)/float(Total))
-    print "numXHypEndo: ",str(numXHypEndo), "  Total %age: "+str(float(numXHypEndo)/float(Total))
-    print "numXHypExo: ",str(numXHypExo), "  Total %age: "+str(float(numXHypExo)/float(Total))
-    print "numYHypEndo: ",str(numYHypEndo), "  Total %age: "+str(float(numYHypEndo)/float(Total))
-    print "numYHypExo: ",str(numYHypExo), "  Total %age: "+str(float(numYHypExo)/float(Total))
+    print("numXProlineEndo: ",str(numXProEndo), "  Total %age: "+str(float(numXProEndo)/float(Total)) )
+    print("numXProlineExo: ",str(numXProExo), "  Total %age: "+str(float(numXProExo)/float(Total)) )
+    print("numYProlineEndo: ",str(numYProEndo), "  Total %age: "+str(float(numYProEndo)/float(Total)) )
+    print("numYProlineExo: ",str(numYProExo), "  Total %age: "+str(float(numYProExo)/float(Total)) )
+    print("numXHypEndo: ",str(numXHypEndo), "  Total %age: "+str(float(numXHypEndo)/float(Total)) )
+    print("numXHypExo: ",str(numXHypExo), "  Total %age: "+str(float(numXHypExo)/float(Total)) )
+    print("numYHypEndo: ",str(numYHypEndo), "  Total %age: "+str(float(numYHypEndo)/float(Total)) )
+    print("numYHypExo: ",str(numYHypExo), "  Total %age: "+str(float(numYHypExo)/float(Total)) )
     
     
     
@@ -1009,7 +1005,7 @@ def residueInfo(infile,outfile):
     #Res Id, chi1,chi2,chi3,chi4,chi5,phi,psi,omega,pucker
     for res in outputArray:
         l=str(res[0])+', '+str(res[6])+', '+str(res[7])+', '+str(res[8])+', '+str(res[1])+', '+str(res[2])+', '+str(res[3])+', '+str(res[4])+', '+str(res[5])+', '+res[9]+'\n'
-        print l
+        print(l )
         outputLines.append(l)
         
     #write the residue information to file
@@ -1282,8 +1278,8 @@ def checkPuckerPatternWrapper(infile):
         puckerStateList=checkPuckerList(chain)
         patternFlagList.append(checkPuckerPattern(puckerStateList))
 
-    print 'File: '+infile+' collagen Pucker Pattern:'
-    print patternFlagList
+    print('File: '+infile+' collagen Pucker Pattern:' )
+    print(patternFlagList )
 
     #if one of the chains does not obey the pattern the whole protein doesn't/
     patternFlag=True
@@ -1372,8 +1368,8 @@ def pdbLineFromAtom(atom):
     try:
         l='ATOM {: >06d} {: <4}{:1}{:3} {:1}{: >4d}{:1}   {: >8.3f}{: >8.3f}{: >8.3f}{: >6.2f}{: >6.2f}      {: <4}{: >2}{: >2}\n'.format(int(atom[0]), atom[1], atom[2], atom[3], atom[4], int(atom[5]), atom[6], float(atom[7]), float(atom[8]), float(atom[9]), float(atom[10]), float(atom[11]), atom[12],atom[13],atom[14])
     except:
-        print "unable to write atom to string: "
-        print atom
+        print("unable to write atom to string: " )
+        print(atom )
         exit(0)
     return l
 
@@ -1382,7 +1378,7 @@ def writeAtomsToTextFile(atoms, filename):
     try:
         vst = open(filename, 'w')
     except IOError as e:
-        print "I/O error({0}): {1}".format(e.errno, e.strerror)
+        print("I/O error({0}): {1}".format(e.errno, e.strerror) )
         raise Exception, "Unable to open output file: "+filename
 
     #parse data 
@@ -1397,7 +1393,7 @@ def readTextFile(filename):
     try:
         vst = open(filename, 'r')
     except IOError as e:
-        print "I/O error({0}): {1}".format(e.errno, e.strerror)
+        print("I/O error({0}): {1}".format(e.errno, e.strerror) )
         raise Exception, "Unable to open input file: " + filename
     lines = vst.readlines()
     vst.close()
@@ -1425,7 +1421,7 @@ def extractAllAtomsFromPDB(lines):
                 if not a in atoms:
                     atoms.append(a)
             except:
-                print "line: " + line + " not understood"
+                print("line: " + line + " not understood" )
                 exit(0)
     return atoms
 
@@ -1440,7 +1436,7 @@ def extractAtomsFromPDB(lines):
                 if not a in atoms:
                     atoms.append(a)
             except:
-                print "line: " + line + " not understood"
+                print("line: " + line + " not understood" )
                 exit(0)
     return atoms
 
@@ -1510,10 +1506,10 @@ def removeLines(lines, items):
         addLine = 1
         if line[0:4]=='ATOM':
             atom = parsePdbLine(line)
-            # print atom
+            # print(atom )
             for item in items:
                 a = item.split()
-                # print a, atom[int(a[1])]
+                # print(a, atom[int(a[1])]
                 if a[0] in atom[int(a[1])]:
                     addLine=0
         elif line[0:3]=='TER':
@@ -1526,7 +1522,7 @@ def removeLines(lines, items):
             lastLineAdded = line[0:3]
         else:
             numLinesRemoved += 1
-    print "Number of lines removed: ", numLinesRemoved
+    print("Number of lines removed: ", numLinesRemoved )
     return newPDB
 
 
@@ -1609,7 +1605,7 @@ def checkPuckerList(atoms):
     #creates a list of the residue numbers and their type
     residues=findResidues(atoms)
 
-    #print residues
+    #print(residues )
 
     #initialise output list
     puckerList=[]
@@ -1617,7 +1613,7 @@ def checkPuckerList(atoms):
     #go through each residue
     for (residueNum,residueName) in residues:
  
-        #print str(residueNum)+' '+residueName
+        #print(str(residueNum)+' '+residueName )
  
         #generate a list of atoms in the current residue
         curResidues=[atom for atom in atoms if atom[5]==residueNum]
@@ -1632,7 +1628,7 @@ def checkPuckerList(atoms):
         #add puckerState to List
         puckerList.append([residueNum,residueName,puckerState])
 
-#    print puckerList
+#    print(puckerList )
     return puckerList 
 
 #convert the state of the residue to the specified pucker state
@@ -1659,7 +1655,7 @@ def convertPuckerState(residue,state):
 
         # find n
         n = np.cross(NCA, CBCA)
-        n = n/linalg.norm(n)
+        n = n/np.linalg.norm(n)
 
         # gamma relative to N (taken as origin)
         NCG = CGPOS-NPOS
@@ -1738,8 +1734,8 @@ def convertPdbPucker(pdb,puckerState):
                         dealtWithResidueList.append(atom[5])
      
                     except:
-                        print "unable to process atom: "
-                        print atom
+                        print("unable to process atom: " )
+                        print(atom )
                         exit(1)
 
             else:
@@ -1757,11 +1753,11 @@ def readPuckerData(filename):
     try:
         for residue in puckerStateLines:
             data=residue.split()
-            # print data,len(data)
+            # print(data,len(data) )
             if data[1]=='HYP' or data[1]=='PRO':
                 puckStateList.append([int(data[0]),data[1],data[2]])
     except:
-        print "Unable to read pucker file:"+filename
+        print("Unable to read pucker file:"+filename) )
         sys.exit(1)
 
     return puckStateList
@@ -1778,7 +1774,7 @@ def writePuckerData(outfile,pucker):
         except:
             outStr=str(puck[0])+' '+puck[1]+'\n'
 
-        # print outStr
+        # print(outStr)
         vst.write(outStr)
     
     vst.close()
@@ -1790,25 +1786,25 @@ def fileRootFromInfile(infile):
         fileroot = strg.replace(infile,'.pdb','',1)
     return fileroot
 
-def readpucker(infile,params):
+def readpucker(infile, params):
     #unpack parameters
-    outfile=params
+    outfile = params
     #perform required operations
-    atoms=readAtoms(infile)
-    pucker=checkPuckerList(atoms)
-    writePuckerData(outfile,pucker)
+    atoms=readAtoms( infile )
+    pucker=checkPuckerList( atoms )
+    writePuckerData( outfile, pucker )
     return
 
-def writepucker(infile,params):
+def writepucker(infile, params):
     #unpack parameters
-    puckerfilename=params[0]
-    outfile=params[1]
+    puckerfilename = params[0]
+    outfile = params[1]
 
     #perform required operations
-    pdb=readTextFile(infile)
-    newPuckerState=readPuckerData(puckerfilename)
-    newPdb=convertPdbPucker(pdb,newPuckerState)
-    writeTextFile(newPdb,outfile)
+    pdb = readTextFile( infile )
+    newPuckerState = readPuckerData( puckerfilename )
+    newPdb = convertPdbPucker( pdb,newPuckerState )
+    writeTextFile( newPdb,outfile )
     return
 
 
@@ -1819,12 +1815,12 @@ def removeLineList(infile, params):
  
     #perform required operations
     pdb=readTextFile(infile)
-    #print "pdb"
-    #print pdb[0:3]
+    #print("pdb")
+    #print(pdb[0:3])
   
     itemsToRemove = readTextFile(rulefile)
-    print "itemsToRemove" 
-    print itemsToRemove
+    print("itemsToRemove" )
+    print(itemsToRemove)
     newPDB = removeLines(pdb, itemsToRemove)
     writeTextFile(newPDB, outfile)
     return
@@ -1875,7 +1871,7 @@ def addTermini(infile, params):
                 CBeta = 109 * np.pi/180.0
        
     if addN==addC==False:
-        print "Trying to add Termini but no termini were specified: ", params
+        print("Trying to add Termini but no termini were specified: ", params)
         exit(1)
     
     # load the pdb info
@@ -1889,7 +1885,7 @@ def addTermini(infile, params):
     
     if addN: 
         if residues[0][1]=='ACE':
-            print "N terminus already terminated with ACE"
+            print("N terminus already terminated with ACE")
         else:
             # generate the points to construct the TNB frame at end of chain
             for atom in atoms[0:30]:
@@ -1933,11 +1929,11 @@ def addTermini(infile, params):
             # insert the ACE String at the right point
             pdb.insert(indexOfFirstAtom, ACEString)
                    
-            print "ACE added to N Terminus."
+            print("ACE added to N Terminus.")
                    
     if addC:
         if residues[-1][1]=='NME':
-            print "C terminus already terminated with NME"
+            print("C terminus already terminated with NME")
         else:
             for atom in atoms[-30:]:
                 if (atom[5] == residues[-1][0]): 
@@ -1980,7 +1976,7 @@ def addTermini(infile, params):
             # insert the ACE String at the right point (after the last atom hence + 1)
             pdb.insert(indexOfLastAtom + 1, NMEString)
             
-            print "NME added to C Terminus."
+            print("NME added to C Terminus.")
             
             # replace the terminal string with a simple ter
             indexOfTer = findSubstringInList(pdb, 'TER', startAtEnd=True)
@@ -2001,9 +1997,9 @@ def fragmentPDB(infile, params):
         try:
             firstRes = int(resPair.split()[0])
             secondRes = int(resPair.split()[1])
-            print "Residue Pair: ", firstRes, secondRes
+            print("Residue Pair: ", firstRes, secondRes)
         except:
-            print "Invalid res pair: ", resPair, " in file: ", params
+            print("Invalid res pair: ", resPair, " in file: ", params)
             exit(1)
         
         filename = fileRoot + '_' + str(firstRes).zfill(4) + '_' + str(secondRes).zfill(4) + '.pdb'
@@ -2096,21 +2092,21 @@ def symmetrize(forcefield, topologyPreSym, topology, pathname='~/svn/SCRIPTS/AMB
         command = pathname + 'us.py ' + topologyPreSym + ' ' + topology
     else:
         command = pathname + '.py ' + topologyPreSym + ' ' + topology
-    print command
+    print(command)
 
     os.system(command)
     return
 
 
 def renameTerminiTop(topology, pdbfile, addLetters):
-    print topology
-    print pdbfile
-    print addLetters
+    print(topology)
+    print(pdbfile)
+    print(addLetters)
 
     if addLetters==1:
-        print 'Adding Ns and Cs to Termini for symmetrization.\n'
+        print('Adding Ns and Cs to Termini for symmetrization.\n')
     else:
-        print 'Removing Ns and Cs from Termini.\n'
+        print('Removing Ns and Cs from Termini.\n')
     originalTopology=readTextFile(topology)
     pdbData=readTextFile(pdbfile)
     chainList=findChains(pdbData)
@@ -2163,7 +2159,7 @@ def renameTerminiTop(topology, pdbfile, addLetters):
                             resWord='N'+residue[1]
                         if curRes==len(chain)-1:
                             resWord='C'+residue[1]
-                    # print resWord
+                    # print(resWord)
                     # add the current word to the list
                     outList.append(resWord)
                     # increment tracker
@@ -2332,17 +2328,17 @@ def prepAmberGMin(infile, params, renameTermini=True):
         paramsFile = params[3]
         paramsFlag = 1
  
-    print rulefile
+    print(rulefile)
  
     if rulefile=='reduce':
-        print "Reducing structure using reduce -Trim from Ambertools."
+        print("Reducing structure using reduce -Trim from Ambertools.")
         os.system("reduce " + infile + " -Trim > " + cleanPDB)
     else:
         if rulefile=='noreduce':
-            print "Not removing or trimming any atoms."
+            print("Not removing or trimming any atoms.")
             os.system("cp " + infile + " " + cleanPDB)
         else:
-            print "Removing atoms according to specified rule file."
+            print("Removing atoms according to specified rule file.")
             removeLineList(infile, [rulefile, cleanPDB])
 
     #generate tleap input script
@@ -2590,7 +2586,7 @@ def proToHyp(infile,convFile,outFile):
 
 def convertSequence(infile, outfile):
     singleLetterSequence = readTextFile(infile)
-    print singleLetterSequence
+    print(singleLetterSequence)
     outSequence = []
     for letter in singleLetterSequence[0]:
         if letter=='A':
@@ -2642,15 +2638,15 @@ def readSequence(infile, mode, outfile, width=80):
     
     #mode 1 numbered with three letter codes on separate lines
     if mode==1:
-        print "mode: 1 selected"
+        print("mode: 1 selected")
         writeTextFile([str(res[0])+' '+str(res[1])+'\n' for res in residues],outfile)
     #mode 1 unumbered with three letter codes on separate lines - suitable for a modify sequence command
     if mode==2:
-        print "mode: 2 selected"
+        print("mode: 2 selected")
         writeTextFile([str(res[1])+'\n' for res in residues],outfile)
     #mode 3 string of first letters only
     if mode==3:
-        print "mode: 3 selected"
+        print("mode: 3 selected")
         l=''
         for res in residues:
             l += getSingleLetterFromThreeLetterAACode(res[1])
@@ -2659,11 +2655,11 @@ def readSequence(infile, mode, outfile, width=80):
     
     # 3 letter sequence as a single line
     if mode==4:
-        print "mode: 4 selected"
+        print("mode: 4 selected")
         writeTextFile([str(res[1])+' ' for res in residues],outfile)
     
     if mode==5:
-        print "mode: 5 selected (fixed width format)"
+        print("mode: 5 selected (fixed width format)")
         l=''
         count = 0
         for res in residues:
@@ -2779,7 +2775,7 @@ def modifySequence(infile, newSequence, startResidue, outFile):
                 renaming=True
 
             #debug statement
-            #print atom[5], newResSeqIndex, resCount, lastResNumber, lastResProc
+            #print(atom[5], newResSeqIndex, resCount, lastResNumber, lastResProc)
 
             #Do we need to reprocess the current residue?
             if (renaming):
@@ -2883,7 +2879,7 @@ def puckerGroupsRBs(infile,resfile,outfile):
             for atom in atomList:
                 fO.write(str(int(atom[0]))+'\n')
         else:
-            print 'residue is not HYP or PRO.'
+            print('residue is not HYP or PRO.')
  
     fO.close()
 
@@ -2891,7 +2887,7 @@ def puckerGroupsRBs(infile,resfile,outfile):
 
 def puckerGroups(infile,OHFlag, outfile):
 
-    print 'OHFlag: ',OHFlag
+    print('OHFlag: ',OHFlag)
 
     #rawData = readTextFile(infile)
     atoms = readAtoms(infile)
@@ -3006,7 +3002,7 @@ def puckerGroupSpec(infile, resfile, OHFlag, scaleFac, rotProb, outfile):
                     fO.write(str(atom)+'\n')
 
         else:
-            print 'residue is not HYP or PRO.'
+            print('residue is not HYP or PRO.')
 
 
     fO.close()
@@ -3226,9 +3222,9 @@ def readResidueSymmetry(atoms):
     
     #minimise the RadialDistanceProjection sum starting with the initial guess
     finalFit = fmin_l_bfgs_b(f, InitialGuess, approx_grad=True, bounds=bounds, factr=10, epsilon=1e-10, maxfun=1000, disp=0)
-    #print 'initial Z Vector Guess: ', zVecGuess
-    #print 'Initial params guess (radius,theta,phi,basePointX,basePointY): ', InitialGuess
-    #print 'Final params and errors:', finalFit
+    #print('initial Z Vector Guess: ', zVecGuess)
+    #print('Initial params guess (radius,theta,phi,basePointX,basePointY): ', InitialGuess)
+    #print('Final params and errors:', finalFit)
     
     #construct the final vectors for the helix axis.
     zFinal=ThreeDPolarToXYZ(1.0,float(finalFit[0][1]),float(finalFit[0][2]))
@@ -3435,9 +3431,9 @@ def readUnitSymmetry(atoms):
     
     #minimise the RadialDistanceProjection sum starting with the initial guess
     finalFit=fmin_l_bfgs_b(f, InitialGuess, approx_grad=True, bounds=bounds, factr=10, epsilon=1e-10, maxfun=1000, disp=0)
-    #print 'initial Z Vector Guess: ', zVecGuess
-    #print 'Initial params guess (radius,theta,phi,basePointX,basePointY): ', InitialGuess
-    #print 'Final params and errors:', finalFit
+    #print('initial Z Vector Guess: ', zVecGuess)
+    #print('Initial params guess (radius,theta,phi,basePointX,basePointY): ', InitialGuess)
+    #print('Final params and errors:', finalFit)
     
     #construct the final vectors for the helix axis.
     zFinal=ThreeDPolarToXYZ(1.0,float(finalFit[0][1]),float(finalFit[0][2]))
@@ -3704,9 +3700,9 @@ def readSymmetryFromAtoms(atoms,capRes,plotFig):
     
     #minimise the RadialDistanceProjection sum starting with the initial guess
     finalFit=fmin_l_bfgs_b(f, InitialGuess, approx_grad=True, bounds=bounds, factr=10, epsilon=1e-10, maxfun=1000, disp=0)
-    #print 'initial Z Vector Guess: ', zVecGuess
-    #print 'Initial params guess (radius,theta,phi,basePointX,basePointY): ', InitialGuess
-    #print 'Final params and errors:', finalFit
+    #print('initial Z Vector Guess: ', zVecGuess)
+    #print('Initial params guess (radius,theta,phi,basePointX,basePointY): ', InitialGuess)
+    #print('Final params and errors:', finalFit)
     
     #output the final plot
     if plotFig==2:
@@ -3771,9 +3767,9 @@ def readSymmetryFromAtoms(atoms,capRes,plotFig):
     HypRadiusData=fmin_l_bfgs_b(alphaHyp, [finalFit[0][0]], approx_grad=True, bounds=bounds, factr=10, epsilon=1e-10, maxfun=1000, disp=0) 
     ProRadiusData=fmin_l_bfgs_b(alphaPro, [finalFit[0][0]], approx_grad=True, bounds=bounds, factr=10, epsilon=1e-10, maxfun=1000, disp=0)
     
-    #print 'Gly Radius:', GlyRadiusData[0][0]
-    #print 'Hyp Radius:', HypRadiusData[0][0]
-    #print 'Pro Radius:', ProRadiusData[0][0]
+    #print('Gly Radius:', GlyRadiusData[0][0])
+    #print('Hyp Radius:', HypRadiusData[0][0])
+    #print('Pro Radius:', ProRadiusData[0][0])
    
     #Find the chain angle and displacement
     bounds=[(-2.5*np.pi,2.5*np.pi),(-10,10)]
@@ -3788,16 +3784,16 @@ def readSymmetryFromAtoms(atoms,capRes,plotFig):
     Chain2To3Params=fmin_l_bfgs_b(Chain2To3, [-100*np.pi/180,-2.8], approx_grad=True, bounds=bounds, factr=10, epsilon=1e-10, maxfun=1000, disp=0) 
     Chain3To1Params=fmin_l_bfgs_b(Chain3To1, [-100*np.pi/180,-2.8], approx_grad=True, bounds=bounds, factr=10, epsilon=1e-10, maxfun=1000, disp=0)
     
-    #print "Chain1To2Params: ",Chain1To2Params[0][0]*180.0/pi,Chain1To2Params 
-    #print "Chain2To3Params: ",Chain2To3Params[0][0]*180.0/pi,Chain2To3Params
-    #print "Chain3To1Params: ",Chain3To1Params[0][0]*180.0/pi,Chain3To1Params
+    #print("Chain1To2Params: ",Chain1To2Params[0][0]*180.0/pi,Chain1To2Params )
+    #print("Chain2To3Params: ",Chain2To3Params[0][0]*180.0/pi,Chain2To3Params)
+    #print("Chain3To1Params: ",Chain3To1Params[0][0]*180.0/pi,Chain3To1Params)
     
     DeltaZChain=(Chain2To3Params[0][1]+Chain3To1Params[0][1])/2.0
     DeltaThetaChain=(180/np.pi)*(Chain2To3Params[0][0]+Chain3To1Params[0][0])/2.0
     
-    #print "DeltaZChain; ",DeltaZChain
-    #print "DeltaThetaChain: ", DeltaThetaChain
-    
+    #print("DeltaZChain; ",DeltaZChain)
+    #print("DeltaThetaChain: ", DeltaThetaChain)
+
     #extract the same reference point from each GXY repeating unit and use to analyse the rotation and spacing along the structure. 
     #Look at each chain separately. Typically use N of the Gly as reference point.
     for residues in residueList:
@@ -3852,25 +3848,25 @@ def readSymmetryFromAtoms(atoms,capRes,plotFig):
         lengthAlongAxis.append(abs(max(zComponents)-min(zComponents)))
         
     #compute some useful final output values
-    #print "Individual theta values for each strand:"
-    #print Theta[0]
-    #print Theta[1]
-    #print Theta[2]
-    #print "mean theta values per strand"
-    #print mean(Theta[0])
-    #print mean(Theta[1])
-    #print mean(Theta[2])
+    #print("Individual theta values for each strand:")
+    #print(Theta[0])
+    #print(Theta[1])
+    #print(Theta[2])
+    #print("mean theta values per strand")
+    #print(mean(Theta[0]))
+    #print(mean(Theta[1]))
+    #print(mean(Theta[2]))
     meanTheta=np.mean([item for sublist in Theta for item in sublist])
     meanD=np.mean([item for sublist in DMags for item in sublist])
     meanLengthAlongAxis=np.mean(lengthAlongAxis)
     numUnitsPerPeriod=360.0/meanTheta
     TruePeriod=numUnitsPerPeriod*meanD        
-    #print 'Final Z Axis: ', zFinal
-    #print 'meanTheta: ',meanTheta
-    #print 'meanD:',meanD
-    #print 'LengthAlongAxis: ', meanLengthAlongAxis
-    #print 'TruePeriod: ', TruePeriod
-    #print 'numUnitsPerPeriod:', numUnitsPerPeriod
+    #print('Final Z Axis: ', zFinal)
+    #print('meanTheta: ',meanTheta)
+    #print('meanD:',meanD)
+    #print('LengthAlongAxis: ', meanLengthAlongAxis)
+    #print('TruePeriod: ', TruePeriod)
+    #print('numUnitsPerPeriod:', numUnitsPerPeriod)
     
     #plot all the vectors of interest in a new window 
     if plotFig > 0:        
@@ -3953,7 +3949,7 @@ def RMSDBetweenChains(x,basePoint,ZVec,list1,list2,fig):
         vectorListB+=[basePoint-basePoint+10*ZVec]
         vectorListC+=['c']
         plotVectors(fig,vectorListA,vectorListB,vectorListC,False)
-        print ssd, deltaTheta, deltaZ    
+        print(ssd, deltaTheta, deltaZ    )
     
     return ssd 
 
@@ -3996,7 +3992,7 @@ def radialDistanceProjectionSumKnownAxis(radius,basePoint,ZVec,dataPoints,fig):
         vectorListB+=[cpList[0]]
         vectorListC+=['m']*len(cpList)
         plotVectors(fig,vectorListA,vectorListB,vectorListC,False)
-        print ssd,radius
+        print(ssd,radius)
     return ssd
 
 
@@ -4046,7 +4042,7 @@ def radialDistanceProjectionSum(params,dataPoints,fig):
         vectorListB+=[cpList[0]]
         vectorListC+=['m']*len(cpList)
         plotVectors(fig,vectorListA,vectorListB,vectorListC,False)
-        print ssd,params
+        print(ssd,params)
     return ssd
 
 def readSymmetry(infile,capRes,figFlag,outfile):
@@ -4060,7 +4056,7 @@ def readSymmetry(infile,capRes,figFlag,outfile):
     
     for item in data:
         fO.write(str(item)+'\n')
-        print item
+        print(item)
         
     fO.close()
 
@@ -4083,7 +4079,7 @@ def readResidueSymmetryWrapper(infile,outfile):
             
     #write the data to file
     writeTextFile(outputArray,outfile)
-    print "Done!"
+    print("Done!")
     return
 
 def fixchirality(infile, outfile):
@@ -4101,11 +4097,11 @@ def fixchirality(infile, outfile):
     writeAtomsToTextFile(atoms, outfile)
     
     # use the other stuff to get rid of orange lines in Eclipse. Might as well.
-    print out_list
+    print(out_list)
     if list_of_changed_residues:
-        print "bad residues altered:", list_of_changed_residues
+        print("bad residues altered:", list_of_changed_residues)
     else:
-        print "No Residues Changed"
+        print("No Residues Changed")
     
 def readchirality(infile, outfile):
     ''' Writes a file which contains a list of the chirality state
@@ -4134,9 +4130,9 @@ def readchirality(infile, outfile):
     chiralityGood = 1
     if badChiralRes:
         chiralityGood = 0
-        print "Bad Chiral Residues: ", badChiralRes
+        print("Bad Chiral Residues: ", badChiralRes)
     else:
-        print "All residues good."
+        print("All residues good.")
 
     return [chiralityGood, badChiralRes]
 
