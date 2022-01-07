@@ -29,18 +29,18 @@ def generateRigidBodyInput(infile, Cis_Trans_File):
     atoms = readAllAtoms(infile)
     outlist= []
     for atom in atoms:
-	outlist.append(str(atom[7]) + " " + str(atom[8]) + " " + str(atom[9]) + "\n")
-    writeTextFile(outlist, "coordsinirigid")
-    outlist = []
+        outlist.append(str(atom[7]) + " " + str(atom[8]) + " " + str(atom[9]) + "\n")
+        writeTextFile(outlist, "coordsinirigid")
 
+    outlist=[]
     # use the cis trans infor to generate a set of rigid body groups
     peptideBondGroupList = [ [int(val) for val in PBG.strip('\r\n').split()] for PBG in readTextFile(Cis_Trans_File)[0::2] ]
 
     for rigidBodyGroup in peptideBondGroupList:
-	outlist.append( "GROUP " + str( len( rigidBodyGroup ) ) + "\n" )
-	for atomIndex in rigidBodyGroup:
-	    outlist.append( str( atomIndex ) + "\n" )
-	outlist.append("\n")
+        outlist.append( "GROUP " + str( len( rigidBodyGroup ) ) + "\n" )
+    for atomIndex in rigidBodyGroup:
+        outlist.append( str( atomIndex ) + "\n" )
+    outlist.append("\n")
 
     writeTextFile(outlist, "rbodyconfig")
 
@@ -110,6 +110,53 @@ def findBestCoords(globMask):
     return numCStates[minCStateIndex], pdbFiles[minCStateIndex]
 
 
+def loadChiralCentres(chiralFile):
+    # parses the chirality file
+    chiralData =  readTextFile(chiralFile)
+    return [ {'state': chirality, 
+                 'CA': entry[0], 
+                  'N': entry[1],
+                  'C': entry[2],
+                 'CB': entry[3],
+                  'H': entry[4]}  for entry, chirality in zip(chiralData[0::2], chiralData[1::2]) ]
+   
+
+def flipChirality(infile, chiralFile, outcoordsFile, outPDB):    
+    
+    # load the coords and inf from the pdb.
+    pdbAtoms = readAllAtoms(infile)
+    
+    chiralList = loadChiralCentres(chiralFile)
+ 
+    for stereoCenter in chiralList:
+        if stereoCenter['state']=='T':
+            curResidue = getResidue(stereoCenter['CA'])
+            newResidue  = flipResidueChirality( curResidue )
+            pdbAtoms = replaceResidueCoords( pdbAtoms, newResidue )
+
+    writeCoordsFile(pdbAtoms, outcoordsFile)
+    replacePdbAtoms(infile, newCoords, outPDB)
+
+
+
+def getResidue():
+    pass
+
+    
+def writeCoordsFile(atoms, filename):
+    l = ['default_name']
+    l.append(str(len(atoms)))
+    for atom1, atom2 in zip( atoms[0::2], atoms[1::2] ):
+        l_str = str(atom1[7]) + ' '
+        l_str += str(atom1[8]) + ' '
+        l_str += str(atom1[9]) + ' '
+        l_str += str(atom2[7]) + ' '
+        l_str += str(atom2[8]) + ' '
+        l_str += str(atom2[9])
+        l.append(l_str)
+        
+    writeTextFile(l, filename)
+    
 
 def eliminateCIS(infile):    
     # load the molecular info from the canon pdb.
@@ -306,28 +353,96 @@ def groupAtomsXYZ(infile, outfile):
 
 
 
-def makeXYZForBlender(infile, outfile):
+def makeXYZForBlender(infile, backboneOnly, resMode, outfile):
     # read in the atoms from the pdb
     atoms=readAllAtoms(infile)
-    
-    # filter out the CA atoms
-    atom2XYZ = [ atom for atom in atoms if atom[1] in ['CA', 'C', 'N']]
+    if backboneOnly==1:
+        # filter out the backbone atoms
+        atom2XYZ = [ atom for atom in atoms if atom[1] in ['CA', 'C', 'N', 'NX']]
+        for atom in atom2XYZ:
+            if atom[1]=='CA':
+                atom[1]='C'
+    elif backboneOnly==2:
+        atom2XYZ = [ atom for atom in atoms if atom[1] in ['CA', 'NX'] ] 
+        for atom in atom2XYZ:
+            if atom[1]=='CA':
+                atom[1]='C'
+    else:
+        atom2XYZ = atoms
+            
 
-    # convert the atom type to an atom colour that reflects the functional gorup of the residue.
-    for atom in atom2XYZ:
-        if atom[3] in ['ARG', 'HIS', 'LYS']:
-            atom[1] ='P' # make the positive charge residues gold
-        elif atom[3] in ['ASP', 'GLU']:
-            atom[1] ='O' # make the negative charge residues brown
-        elif atom[3] in ['SER', 'THR', 'ASN', 'GLN']:
-            atom[1] ='C' # make the polar residues purple
-        elif atom[3] in ['ALA', 'VAL', 'ILE', 'LEU', 'MET', 'PHE', 'TYR', 'TRP']:
-            atom[1] ='N' # make the hydrophobic residues blue
-        elif atom[3] in ['CYS', 'SEC','GLY', 'PRO', 'HYP']:
-            atom[1] ='S' # make the special residues green
-        else:
-            print 'Unrecognised residue name:', atom[3], ' line:', atom[0]
-            atom[1] ='Pb' # dark grey
+    if resMode==2:
+        # convert the atom type to an atom colour that reflects the functional gorup of the residue.
+        for atom in atom2XYZ:
+            if atom[3] in ['ARG', 'HIS', 'LYS']:
+                atom[1] ='P' # make the positive charge residues gold
+            elif atom[3] in ['ASP', 'GLU']:
+                atom[1] ='O' # make the negative charge residues brown
+            elif atom[3] in ['SER', 'THR', 'ASN', 'GLN']:
+                atom[1] ='C' # make the polar residues purple
+            elif atom[3] in ['ALA', 'VAL', 'ILE', 'LEU', 'MET', 'PHE', 'TYR', 'TRP']:
+                atom[1] ='N' # make the hydrophobic residues blue
+            elif atom[3] in ['CYS', 'SEC','GLY', 'PRO', 'HYP']:
+                atom[1] ='S' # make the special residues green
+            elif atom[3] in ['Imb', 'Ime', 'Imc']:
+                atom[1] ='Ca' # make the PLP backbones some color
+            else:
+                print 'Unrecognised residue name:', atom[3], ' line:', atom[0]
+                atom[1] ='Pb' # dark grey
+
+    if resMode==1:
+        # convert the atom type to an atom colour that reflects the amino acid
+        for atom in atom2XYZ:
+            if atom[3]=='ARG':
+                atom[1] = 'H'
+            elif atom[3]=='HIS':
+                atom[1] = 'He'
+            elif atom[3]== 'LYS':
+                atom[1] = 'Li'
+            elif atom[3]== 'ASP':
+                atom[1] = 'Be'
+            elif atom[3]== 'GLU':
+                atom[1] = 'B'            
+            elif atom[3]== 'SER':
+                atom[1] = 'C'
+            elif atom[3]== 'THR':
+                atom[1] = 'N'            
+            elif atom[3]== 'ASN':
+                atom[1] = 'O'
+            elif atom[3]== 'GLN':
+                atom[1] = 'F'
+            elif atom[3]== 'ALA':
+                atom[1] = 'Ne'
+            elif atom[3]== 'VAL':
+                atom[1] = 'Na'  
+            elif atom[3]== 'ILE':
+                atom[1] = 'Mg'  
+            elif atom[3]== 'LEU':
+                atom[1] = 'Al'
+            elif atom[3]== 'MET':
+                atom[1] = 'Si' 
+            elif atom[3]== 'PHE':
+                atom[1] = 'P'
+            elif atom[3]== 'TYR':
+                atom[1] = 'S'                
+            elif atom[3]== 'TRP':
+                atom[1] = 'Cl'
+            elif atom[3]== 'CYS':
+                atom[1] = 'Ar'
+            elif atom[3]== 'SEC':
+                atom[1] = 'K'
+            elif atom[3]== 'GLY':
+                atom[1] = 'Ca'
+            elif atom[3]== 'PRO':
+                atom[1] = 'Ga'                
+            elif atom[3]== 'HYP':
+                atom[1] = 'Ge'                
+            elif atom[3] in ['Imb', 'Ime', 'Imc']:
+                atom[1] ='As'
+            else:
+                print 'Unrecognised residue name:', atom[3], ' line:', atom[0]
+                atom[1] ='Pb' # dark grey
+
 
     writeXYZ(atom2XYZ, outfile)
     print 'Done'
@@ -384,20 +499,24 @@ def replacePdbXYZ(infile, xyz, outputfile):
     return
 
 
-def replacePdbAtoms(infile, newCoords, outfile):
+def replacePdbAtoms(infile, newCoords, outfile, pdb=None, atoms=None):
     ''' Creates a verbatim copy of the pdb infile but with the coords replaced by the list of coords in new Atoms.
-        Assumes the coords are in the same order as the pdb file atom lines and are in a list of xyz triplets.'''
+        Assumes the coords are in the same order as the pdb file atom lines and are in a list of xyz triplets.
+        works for a 2D numpy array of m x 3. '''
 
-    # read in the atoms from the pdb
-    atoms=readAllAtoms(infile)
+    if atoms==None:
+        # read in the atoms from the pdb
+        atoms=readAllAtoms(infile)
+
+    if pdb==None:
+        # get the raw pdb file
+        pdb=readTextFile(infile)
 
     # check the lists are compatible
     if len(atoms)!=len(newCoords):
         print "atom lists incompatible sizes" 
         sys.exit(0)
 
-    # get the raw pdb file
-    pdb=readTextFile(infile)
 
     # seed the output array
     outputlines=[]
@@ -432,7 +551,17 @@ def replacePdbAtoms(infile, newCoords, outfile):
 
     return
 
-def replaceAtoms(atoms,newCoords):
+
+def getCoordsFromAtoms(atoms):
+    coords = []
+    for atom in atoms: 
+        coords.append(atom[7])
+        coords.append(atom[8])
+        coords.append(atom[9])
+    return coords
+
+
+def replaceAtoms(atoms, newCoords):
     ''' Replaces the atomic coords in the atoms array with a new set of coords.'''
 
     if len(atoms)!=len(newCoords):
@@ -1941,7 +2070,24 @@ def reThread(infile, newSequence):
     # save the pdb with the new atoms:
     
 
+def centrePDB(inpFile):
+    
+    pdb = readTextFile(inpFile)
+    
+    # get the atoms
+    atoms = extractAtomsFromPDB(pdb) 
+    
+    atomsXYZ = np.array( [ [float(atom[7]), float(atom[8]), float(atom[9])] for atom in atoms] )
 
+    # compute centre of mass - technically should multiply by weight of atoms but not doing that. 
+    # just finding geometric centre of blob.
+    com = np.sum(atomsXYZ)/len(atomsXYZ)
+    
+    atomsXYZ = atomsXYZ - com
+     
+    replacePdbAtoms(inpFile, atomsXYZ, inpFile[0:-4] + '_com.pdb', pdb=pdb, atoms=atoms)
+     
+    
 
 #this is hacked to do what I wanted it to do for one occasion and is not generalised
 def symmetrize(forcefield, topologyPreSym, topology, pathname='~/svn/SCRIPTS/AMBER/symmetrise_prmtop/perm-prmtop.ff03'):
@@ -2271,7 +2417,7 @@ def renumberResidues(infile, startNum, outfile):
         if vals[0] in ['ANISOU']:
             skip=1
 
-        #if we are dealing with an atom or hetatom
+         #if we are dealing with an atom or hetatom
         if vals[0] in ['HETATM', 'ATOM']:
             
             #parse the pdb line
@@ -2490,7 +2636,7 @@ def convertSequence(infile, outfile):
     writeTextFile(outSequence, outfile)
         
 
-def readSequence(infile,mode,outfile):
+def readSequence(infile, mode, outfile, width=80):
     atoms=readAtoms(infile)
     residues=findResidues(atoms)
     
@@ -2507,33 +2653,59 @@ def readSequence(infile,mode,outfile):
         print "mode: 3 selected"
         l=''
         for res in residues:
-            #if not a special case then copy first letter otherwise deal with each residue type on its own.
-            if not res[1] in ['ARG','LYS','ASP','GLU','ASN','GLN','SEC','PHE','TYR','TRP']:
-                l=l+str(res[1][0])
-            else:
-                if res[1]=='ARG':
-                    l+='R'
-                if res[1]=='LYS':
-                    l+='K'
-                if res[1]=='ASP':
-                    l+='D'
-                if res[1]=='GLU':
-                    l+='E'
-                if res[1]=='ASN':
-                    l+='N'        
-                if res[1]=='GLN':
-                    l+='Q'        
-                if res[1]=='SEC':
-                    l+='U'
-                if res[1]=='PHE':
-                    l+='F'                
-                if res[1]=='TYR':
-                    l+='Y'
-                if res[1]=='TRP':
-                    l+='W'
+            l += getSingleLetterFromThreeLetterAACode(res[1])
         l+='\n'
         writeTextFile(l,outfile)
+    
+    # 3 letter sequence as a single line
+    if mode==4:
+        print "mode: 4 selected"
+        writeTextFile([str(res[1])+' ' for res in residues],outfile)
+    
+    if mode==5:
+        print "mode: 5 selected (fixed width format)"
+        l=''
+        count = 0
+        for res in residues:
+            l += getSingleLetterFromThreeLetterAACode(res[1])
+            count +=1
+            if count==width:
+                count = 0
+                l += '\n'
+        if not count==width:
+            l += '\n'
+        writeTextFile(l,outfile)
+        
     return
+
+def getSingleLetterFromThreeLetterAACode(res):
+    # copy first letter in cases where that works
+    if not res in ['ARG','LYS','ASP','GLU','ASN','GLN','SEC','PHE','TYR','TRP']:
+        l = res[0]
+    else:
+        # specify explicitly where first letter is not the code
+        if res=='ARG':
+            l = 'R'
+        if res=='LYS':
+            l = 'K'
+        if res=='ASP':
+            l = 'D'
+        if res=='GLU':
+            l = 'E'
+        if res=='ASN':
+            l = 'N'        
+        if res=='GLN':
+            l = 'Q'        
+        if res=='SEC':
+            l = 'U'
+        if res=='PHE':
+            l = 'F'                
+        if res=='TYR':
+            l = 'Y'
+        if res=='TRP':
+            l = 'W'
+
+    return l
     
 def modifySequence(infile, newSequence, startResidue, outFile):
     

@@ -1,21 +1,957 @@
 #!/usr/bin/env python
 import sys, os
-sys.path.append('/usr/lib64/python2.7/site-packages')
-sys.path.append('~/src/pele')
-sys.path.append('/home/cjf41/HETS/H12/')
-sys.path.append('/home/cjf41/lib/data')
-
-import math as math
 import numpy as np
 import pdbLib as pdb
 import copy as cp
-from pele.mindist import MinPermDistAtomicCluster
-from pele.utils.rotations import random_q
-from pele.utils.rotations import q2mx
-from pele.utils.rotations import mx2aa
-from pele.utils.rotations import aa2mx
+import itertools
+import munkres
+
+rot_epsilon = 1e-6
+
+def isEqual(p1, p2, epsilon):
+    # checks to see if two vectors are equal. 
+    # Zero vector defined as having a magnitude less than epsilon. 
+    equal = True # assume vectors are equal
+    n = p1 - p2
+    nMag =  np.linalg.norm(n)
+    
+    if ( abs(nMag - 0.0) > epsilon):
+        equal = False
+        
+    return equal
 
 
+def rotPAboutAxis(p, n, angle):
+    # angle in radians
+    # rotates the vector P about an axis n by an angle.
+
+    nHat = n/np.linalg.norm(n) # ensure we are using a normalised vector
+    try:
+        outVec = p*np.cos(angle) + np.cross(nHat, p)*np.sin(angle) + nHat*np.dot(nHat, p)*(1- np.cos(angle))
+    except ValueError:
+        print("valueError")
+        outVec = p
+
+    return outVec
+
+
+def rotPAboutAxisAtPoint(p, p0, n, angle):
+    # angle in radians
+    # rotates the vector P about an axis n through the point p0 by an angle.
+    if not isEqual(p, p0, 1e-10):
+        r = p - p0
+        nHat = n/np.linalg.norm(n) # ensure we are using a normalised vector
+        try:
+            r_Rot = r*np.cos(angle) + np.cross(nHat, r)*np.sin(angle) + nHat*np.dot(nHat, r)*(1- np.cos(angle))
+            outVec = r_Rot + p0
+        except ValueError:
+            print("valueError")
+            outVec = p
+    else:
+        outVec = p
+    return outVec
+
+def _find_permutations(*args, **kwargs):
+    return find_permutations_munkres(*args, **kwargs)
+ 
+def permuteArray(Xold, perm):
+    # don't modify Xold
+    Xnew = np.copy(Xold)
+    permsorted = sorted(perm)
+    for (iold, inew) in itertools.izip(permsorted, perm):
+        Xnew[inew*3:inew*3+3] = Xold[iold*3:iold*3+3]
+ 
+    return Xnew
+ 
+def _make_cost_matrix(X1, X2):
+    """
+    return the cost matrix for use in the hungarian algorithm.
+     
+    the cost matrix is the distance matrix (squared) for all atoms in atomlist
+    """
+    cost = (((X1[np.newaxis,:] - X2[:,np.newaxis,:])**2).sum(2))
+    return cost
+ 
+def find_permutations_munkres( X1, X2, make_cost_matrix=_make_cost_matrix ):
+    """
+    For a given set of positions X1 and X2, find the best permutation of the
+    atoms in X2.
+     
+    The positions must already be reshaped to reflect the dimensionality of the system!
+ 
+    Use an implementation of the Hungarian Algorithm in the Python package
+    index (PyPi) called munkres (another name for the algorithm).  The
+    hungarian algorithm time scales as O(n^3), much faster than the O(n!) from
+    looping through all permutations.
+ 
+    http://en.wikipedia.org/wiki/Hungarian_algorithm
+    http://pypi.python.org/pypi/munkres/1.0.5.2
+     
+    another package, hungarian, implements the same routine in comiled C
+    http://pypi.python.org/pypi/hungarian/
+    When I first downloaded this package I got segfaults.  The problem for me
+    was casing an integer pointer as (npy_intp *).  I may add the corrected 
+    version to pele at some point
+    """
+    #########################################
+    # create the cost matrix
+    # cost[j,i] = (X1(i,:) - X2(j,:))**2
+    #########################################
+    cost = make_cost_matrix(X1, X2)
+ 
+    #########################################
+    # run the munkres algorithm
+    #########################################
+    matrix = cost.tolist()
+    m = munkres.Munkres()
+    newind = m.compute(matrix)    
+     
+    #########################################
+    # apply the permutation
+    #########################################
+    costnew = 0.
+    new_indices = range(len(X1))
+    for (iold, inew) in newind:
+        costnew += cost[iold, inew]
+        new_indices[inew] = iold
+ 
+    dist = np.sqrt(costnew)
+    return dist, new_indices
+ 
+def find_best_permutation(X1, X2, permlist=None, user_algorithm=None, 
+                             reshape=True, user_cost_matrix=_make_cost_matrix,
+                             **kwargs):
+    """
+    find the permutation of the atoms which minimizes the distance |X1-X2|
+     
+    With all the default parameters, findBestPermutation assumes that X1, X2
+    are arrays of atoms in 3d space and performs reshaping on the coordinates. However,
+    if you want to pass a 2D system or a custom array with own cost function, you can turn
+    automatic reshaping off. 
+     
+    Parameters
+    ----------
+    X1, X2 : 
+        the structures to align
+    permlist : a list of lists
+        A list of lists of atoms which are interchangable.
+        e.g. for a 50/50 binary mixture::
+         
+            permlist = [range(1,natoms/2), range(natoms/2,natoms)]
+         
+        If permlist is None all atoms are assumed to be permutable.
+ 
+    user_algoriithm : None or callable
+        you can optionally pass which algorithm to use.
+    gen_cost_matrix : None or callable
+        user function to generate the cost matrix
+    reshape : boolean
+        shall coordinate reshaping be performed.
+    box_lengths : float array
+        array of floats giving the box lengths for periodic boundary conditions.
+        Set to None for no periodic boundary conditions.
+     
+    Returns
+    -------
+    dist : float
+        the minimum distance WARNING: THIS IS NOT NECESSARILY CORRECT, IT SHOULD BE 
+        RECALCULATED.  THIS WILL BE REMOVED IN THE FUTURE.
+    perm:
+        a permutation which will best align coords2 with coords1
+     
+    Notes
+    -----
+    For each list of interchangeable atoms in permlist the permutation
+    which minimizes the distance between the two structures is found.  This minimimization
+    is done by mapping the problem onto the linear assignment problem which can then be solved
+    using graph theoretic techniques.  
+     
+    http://en.wikipedia.org/wiki/Linear_assignment_problem
+    http://en.wikipedia.org/wiki/Hungarian_algorithm
+ 
+    there are several packages in pypi which solve the linear assignment problem
+     
+    hungarian : c++ code wrapped in python.  scales roughly like natoms**2.5
+     
+    munkres : completely in python. scales roughly like natoms**3.  very slow for natoms > 10
+     
+    in addition we have wrapped the OPTIM version for use in pele.  It uses the sparse 
+    version of the Jonker-Volgenant algorithm.  Furthermore the cost matrix calculated in 
+    a compiled language for an additional speed boost. It scales roughly like natoms**2
+ 
+    """
+    if reshape:
+        X1 = X1.reshape([-1,3])
+        X2 = X2.reshape([-1,3])
+     
+    if permlist is None:
+        permlist = [range(len(X1))]
+     
+    newperm = range(len(X1))
+    disttot = 0.
+     
+    for atomlist in permlist:
+        if len(atomlist) == 0:
+            continue
+        if user_algorithm is not None:
+            dist, perm = user_algorithm(X1[atomlist], X2[atomlist], make_cost_matrix=user_cost_matrix, **kwargs)
+        else:
+            dist, perm = _find_permutations(X1[atomlist], X2[atomlist], **kwargs)
+         
+        disttot += dist**2
+        for atom, i in zip(atomlist,xrange(len(atomlist))):
+            newperm[atom] = atomlist[perm[i]]
+    dist = np.sqrt(disttot)
+    return dist, newperm
+ 
+def _cartesian_distance_periodic(x1, x2, box_lengths):
+    dim = len(box_lengths)
+    dx = x2 - x1
+    dx = dx.reshape([-1,dim])
+    dx -= box_lengths * np.round(dx / box_lengths[np.newaxis, :])
+    dx = dx.ravel()
+    dist = np.linalg.norm(dx)
+    return dist
+ 
+def _cartesian_distance(x1, x2, box_lengths=None):
+    if box_lengths is None:
+        return np.linalg.norm(x2-x1)
+    else:
+        return _cartesian_distance_periodic(x1, x2, box_lengths)
+ 
+def optimize_permutations(X1, X2, permlist=None, user_algorithm=None,
+                           recalculate_distance=_cartesian_distance,
+                           box_lengths=None,
+                           **kwargs):
+    """return the best alignment of the structures X1 and X2 after optimizing permutations
+     
+    Parameters
+    ----------
+    X1, X2 : 
+        the structures to align.  X1 will be left unchanged.
+    permlist : a list of lists
+        A list of lists of atoms which are interchangable.
+        e.g. for a 50/50 binary mixture::
+         
+            permlist = [range(1,natoms/2), range(natoms/2,natoms)]
+ 
+    user_algoriithm : None or callable
+        you can optionally pass which algorithm to use to optimize the permutations the structures
+    gen_cost_matrix : None or callable
+        user function to generate the cost matrix
+    recalculate_distance : callable
+        function to compute the distance of the optimized coords.  If None is passed
+        then the distance is not recalculated and the returned distance is unreliable.
+    reshape : boolean
+        shall coordinate reshaping be performed.
+    box_lengths : float array
+        array of floats giving the box lengths for periodic boundary conditions.
+        Set to None for no periodic boundary conditions.
+     
+    Returns
+    -------
+    dist : float
+        the minimum distance
+    X1, X2new:
+        the optimized coordinates
+ 
+    See Also
+    --------
+    find_best_permutation : 
+        use this function to find the optimized permutation without changing the coordinates.
+    """
+    if box_lengths is not None:
+        kwargs["box_lengths"] = box_lengths
+    dist, perm = find_best_permutation(X1, X2, permlist=permlist, 
+                    user_algorithm=user_algorithm, **kwargs)
+    X2_ = X2.reshape([-1, 3])
+    X2new = X2_[perm].flatten()
+     
+    if recalculate_distance is not None:
+        # Recalculate the distance.  We can't trust the returned value
+        dist = _cartesian_distance(X1, X2new, box_lengths)
+     
+    return dist, X1, X2new
+ 
+ 
+def findrotation_kabsch(coords1, coords2, align_com=True):
+    """
+    Kabsch, Wolfgang, (1976) "A solution of the best rotation to relate two sets of vectors", Acta Crystallographica 32:922
+     
+    ..note::
+        this has different return values than findrotation_kearsley.  The return values for this
+        function may change in the future.
+    """
+    # check if arrays are of same size
+    if coords1.size != coords2.size:
+        raise ValueError("dimension of arrays does not match")
+     
+    # reshape the arrays
+    x1 = coords1.reshape([-1,3]).copy()
+    x2 = coords2.reshape([-1,3]).copy()
+     
+    # determine number of atoms
+    natoms = x1.shape[0]
+     
+    # set both com to zero
+    if align_com:
+        com1 = np.sum(x1, axis=0) / float(natoms)
+        com2 = np.sum(x2, axis=0) / float(natoms)
+        x1 -= com1
+        x2 -= com2
+   
+    # calculate covariance matrix
+    A = np.dot( x2.transpose(), x1)
+    # and do single value decomposition
+    u, s, v = np.linalg.svd(A)
+  
+    if np.linalg.det(u) * np.linalg.det(v) + 1.0 < 1e-8:
+        s[-1] = -s[-1]
+        u[:,-1] = -u[:,-1]
+ 
+    return  np.dot(u, v).transpose()
+     
+def findrotation_kearsley(x1, x2, align_com=True):
+    """Return the rotation matrix which aligns XB with XA
+     
+    Return the matrix which
+    aligns structure XB to be as similar as possible to structure XA.
+    To be precise, rotate XB, so as to minimize the distance |XA - XB|.
+ 
+    Rotations will be done around the origin, not the center of mass
+ 
+    Rotational alignment follows the prescription of
+    Kearsley, Acta Cryst. A, 45, 208-210, 1989
+    http://dx.doi.org/10.1107/S0108767388010128
+    """
+    if x1.size != x2.size:
+        raise ValueError("dimension of arrays does not match")
+     
+    # reshape the arrays
+    x1 = x1.reshape([-1,3]).copy()
+    x2 = x2.reshape([-1,3]).copy()
+    # determine number of atoms
+    natoms = x1.shape[0]
+     
+    # set both com to zero
+    if align_com:
+        com1 = np.sum(x1,axis=0) / float(natoms)
+        com2 = np.sum(x2,axis=0) / float(natoms)
+        x1 -= com1
+        x2 -= com2
+ 
+    x1 = x1.ravel() 
+    x2 = x2.ravel()
+     
+    # TODO: this is very dirty!
+    #########################################
+    # Create matrix QMAT
+    #########################################
+ 
+    QMAT = np.zeros([4,4], np.float64)
+    for J1 in xrange(natoms):
+        J2 = 3* J1 -1
+        XM = x1[J2+1] - x2[J2+1]
+        YM = x1[J2+2] - x2[J2+2]
+        ZM = x1[J2+3] - x2[J2+3]
+        XP = x1[J2+1] + x2[J2+1]
+        YP = x1[J2+2] + x2[J2+2]
+        ZP = x1[J2+3] + x2[J2+3]
+        QMAT[0,0] = QMAT[0,0] + XM**2 + YM**2 + ZM**2
+        QMAT[0,1] = QMAT[0,1] - YP*ZM + YM*ZP
+        QMAT[0,2] = QMAT[0,2] - XM*ZP + XP*ZM
+        QMAT[0,3] = QMAT[0,3] - XP*YM + XM*YP
+        QMAT[1,1] = QMAT[1,1] + YP**2 + ZP**2 + XM**2
+        QMAT[1,2] = QMAT[1,2] + XM*YM - XP*YP
+        QMAT[1,3] = QMAT[1,3] + XM*ZM - XP*ZP
+        QMAT[2,2] = QMAT[2,2] + XP**2 + ZP**2 + YM**2
+        QMAT[2,3] = QMAT[2,3] + YM*ZM - YP*ZP
+        QMAT[3,3] = QMAT[3,3] + XP**2 + YP**2 + ZM**2
+ 
+    QMAT[1,0] = QMAT[0,1]
+    QMAT[2,0] = QMAT[0,2]
+    QMAT[2,1] = QMAT[1,2]
+    QMAT[3,0] = QMAT[0,3]
+    QMAT[3,1] = QMAT[1,3]
+    QMAT[3,2] = QMAT[2,3]
+ 
+    ###########################################
+    """
+    Find eigenvalues and eigenvectors of QMAT.  The eigenvector corresponding
+    to the smallest eigenvalue is the quaternion which rotates XB into best
+    alignment with XA.  The smallest eigenvalue is the squared distance between
+    the resulting structures.
+    """
+    ###########################################
+    (eigs, vecs) = np.linalg.eig(QMAT)
+ 
+    imin = np.argmin(eigs)
+    eigmin = eigs[imin] # the minimum eigenvector
+    Q2 = vecs[:,imin]  # the eigenvector corresponding to the minimum eigenvalue
+    if eigmin < 0.:
+        if abs(eigmin) < 1e-6:
+            eigmin = 0.
+        else:
+            print 'minDist> WARNING minimum eigenvalue is ',eigmin,' change to absolute value'
+            eigmin = -eigmin
+ 
+    dist = np.sqrt(eigmin) # this is the minimized distance between the two structures
+ 
+    Q2 = np.real_if_close(Q2, 1e-10)
+    if np.iscomplexobj(Q2):
+        raise ValueError("Q2 is complex")
+    return dist, q2mx(Q2)
+ 
+findrotation = findrotation_kearsley
+ 
+class StandardClusterAlignment(object):
+    """
+    class to iterate over standard alignments for atomic clusters
+ 
+    Quickly determines alignments of clusters which are possible exact matches.
+    It uses atoms which are far away from the center to determine possible
+    rotations. The algorithm does the following:
+ 
+    1) Get 2 reference atoms from structure 1 which are farthest away from center
+       and are not linear
+    2) Determine candidates from structure 2 which are in same shell
+       as reference atoms from structure 1 (+- accuracy)
+    3) loop over all candidate combinations to determine
+       orientation and check for match. Skip directly if angle of candidates
+       does not match angle of reference atoms in structure 1.
+ 
+    Parameters
+    ----------
+    coords1 : np.array
+        first coordinates
+    coords2 : np.array
+        second coordinates
+    accuracy : float
+        accuracy of shell for atom candidates in standard alignment
+    can_invert : boolean
+        is an inversion possible?
+ 
+    Examples
+    --------
+ 
+    >> for rot, invert in StandardClusterAlignment(X1, X2):
+    >>     print "possible rotation:",rot,"inversion:",invert
+ 
+    """
+    def __init__(self, coords1, coords2, accuracy = 0.01, can_invert=True):
+        x1 = coords1.reshape([-1,3]).copy()
+        x2 = coords2.reshape([-1,3]).copy()
+ 
+        self.accuracy = accuracy
+        self.can_invert = can_invert
+ 
+        # calculate distance of all atoms
+        R1 = np.sqrt(np.sum(x1*x1, axis=1))
+        R2 = np.sqrt(np.sum(x2*x2, axis=1))
+ 
+        # at least 2 atoms are needed
+        # get atom most outer atom
+ 
+        # get 1. reference atom in configuration 1
+        # use the atom with biggest distance to com
+        idx_sorted = R1.argsort()
+        idx1_1 = idx_sorted[-1]
+ 
+        # find second atom which is not in a line
+        cos_best = 99.00
+        for idx1_2 in reversed(idx_sorted[0:-1]):
+            # stop if angle is larger than threshold
+            cos_theta1 = np.dot(x1[idx1_1], x1[idx1_2]) / \
+                (np.linalg.norm(x1[idx1_1])*np.linalg.norm(x1[idx1_2]))
+ 
+            # store the best match in case it is a almost linear molecule
+            if np.abs(cos_theta1) < np.abs(cos_best):
+                cos_best = cos_theta1
+                idx1_2_best = idx1_2
+ 
+            if np.abs(cos_theta1) < 0.9:
+                break
+ 
+        idx1_2 = idx1_2_best
+ 
+        # do a very quick check if most distant atom from
+        # center are within accuracy
+        if np.abs(R1[idx1_1] - R2.max()) > accuracy:
+            candidates1 = []
+            candidates2 = []
+        else:
+            # get indices of atoms in shell of thickness 2*accuracy
+            candidates1 = np.arange(len(R2))[ \
+                 (R2 > R1[idx1_1] - accuracy)*(R2 < R1[idx1_1] + accuracy)]
+            candidates2 = np.arange(len(R2))[ \
+                 (R2 > R1[idx1_2] - accuracy)*(R2 < R1[idx1_2] + accuracy)]
+ 
+        self.x1 = x1
+        self.x2 = x2
+        self.idx1_1 = idx1_1
+        self.idx1_2 = idx1_2
+        self.idx2_1 = None
+        self.idx2_2 = None
+        self.invert = False
+ 
+        self.cos_theta1 = cos_theta1
+        self.candidates2 = candidates2
+ 
+        self.iter1 = iter(candidates1)
+        self.iter2 = iter(self.candidates2)
+ 
+    def __iter__(self):
+        return self
+ 
+    def next(self):
+        # obtain first index for first call
+        if self.idx2_1 is None:
+            self.idx2_1 = self.iter1.next()
+ 
+        # toggle inversion if inversion is possible
+        if self.can_invert and self.invert == False and self.idx2_2 is not None:
+            self.invert = True
+        else:
+            # determine next pair of indices
+            self.invert = False
+            # try to increment 2nd iterator
+            try:
+                self.idx2_2 = self.iter2.next()
+            except StopIteration:
+                # end of list, start over again
+                self.iter2 = iter(self.candidates2)
+                # and increment iter1
+                self.idx2_1 = self.iter1.next()
+                self.idx2_2 = None
+                return self.next()
+ 
+        if self.idx2_1 == self.idx2_2:
+            return self.next()
+ 
+        x1 = self.x1
+        x2 = self.x2
+        idx1_1 = self.idx1_1
+        idx1_2 = self.idx1_2
+        idx2_1 = self.idx2_1
+        idx2_2 = self.idx2_2
+ 
+        assert idx1_1 is not None
+        assert idx1_2 is not None
+        assert idx2_1 is not None
+        assert idx2_2 is not None
+ 
+        # we can immediately trash the match if angle does not match
+        try:
+            cos_theta2 = np.dot(x2[idx2_1], x2[idx2_2]) / \
+                (np.linalg.norm(x2[idx2_1])*np.linalg.norm(x2[idx2_2]))
+        except ValueError:
+            raise
+        if np.abs(cos_theta2 - self.cos_theta1) > 0.5:
+            return self.next()
+ 
+        mul = 1.0
+        if self.invert:
+            mul=-1.0
+ 
+        # get rotation for current atom match candidates
+        dist, rot = findrotation(
+            x1[[idx1_1, idx1_2]], mul*x2[[idx2_1, idx2_2]], align_com=False)
+ 
+        return rot, self.invert
+ 
+ 
+ 
+class TransformPolicy(object):
+    """ interface for possible transformations on a set of coordinates
+ 
+    The transform policy tells minpermdist how to perform transformations,
+    i.e. a translation, rotation and inversion on a specific set of
+    coordinates. This class is necessary since in general a coordinate array
+    does not carry any information  on the type of coordinate, e.g. if it's a
+    site coordinate, atom coordinate or angle axis vector.
+ 
+    All transformation act in place, that means they change the current
+    coordinates and do not make a copy.
+ 
+    """
+      
+    def translate(self, X, d):
+        """ translate the coordinates """
+        raise NotImplementedError
+     
+    def rotate(self, X, mx):
+        """ apply rotation matrix mx for a rotation around the origin"""
+        raise NotImplementedError
+     
+    def can_invert(self):
+        """ returns True or False if an inversion can be performed"""
+        raise NotImplementedError
+     
+    def invert(self, X):
+        """ perform an inversion at the origin """
+        raise NotImplementedError
+     
+    def permute(self, X, perm):
+        """ returns the permuted coordinates """
+     
+class MeasurePolicy(object):
+    """ interface for possible measurements on a set of coordinates
+ 
+    The MeasurePolicy defines an interface which defines how to perform
+    certain measures which are essential for minpermdist on a set of
+    coordinates. For more motivation of this class see TransformPolicy.
+    """
+     
+    def get_com(self, X):
+        """ calculate the center of mass """
+        raise NotImplementedError
+     
+    def get_dist(self, X1, X2, with_vector=False):
+        """ calculate the distance between 2 set of coordinates """
+        raise NotImplementedError
+     
+    def find_permutation(self, X1, X2):
+        """ find the best permutation between 2 sets of coordinates """
+        raise NotImplementedError
+     
+    def find_rotation(self, X1, X2):
+        """ find the best rotation matrix to bring structure 2 on 1 """
+        raise NotImplementedError
+ 
+class TransformAtomicCluster(TransformPolicy):
+    """ transformation rules for atomic clusters """
+     
+    def __init__(self, can_invert=True):
+        self._can_invert = can_invert
+     
+    @staticmethod
+    def translate(X, d):
+        Xtmp = X.reshape([-1,3])
+        Xtmp += d
+     
+    @staticmethod
+    def rotate(X, mx,):
+        Xtmp = X.reshape([-1,3])
+        Xtmp = np.dot(mx, Xtmp.transpose()).transpose()
+        X[:] = Xtmp.reshape(X.shape)
+     
+    @staticmethod        
+    def permute(X, perm):
+        a = X.reshape(-1,3)[perm].flatten()
+        # now modify the passed object, X
+        X[:] = a[:]
+        return X
+         
+    def can_invert(self):
+        return self._can_invert
+     
+    @staticmethod
+    def invert(X):
+        X[:] = -X
+         
+class MeasureAtomicCluster(MeasurePolicy):
+    """ measure rules for atomic clusters """
+     
+    def __init__(self, permlist=None):
+        self.permlist = permlist
+     
+    def get_com(self, X):
+        X = np.reshape(X, [-1,3])
+        natoms = len(X[:,0])
+        com = X.sum(0) / natoms
+        return com
+ 
+    def get_dist(self, X1, X2, with_vector=False):
+        dist = np.linalg.norm(X1.ravel()-X2.ravel())
+        if with_vector:
+            return dist, X2-X1
+        else:
+            return dist
+     
+    def find_permutation(self, X1, X2):
+        return find_best_permutation(X1, X2, self.permlist)
+     
+    def find_rotation(self, X1, X2):
+        dist, mx = findrotation(X1, X2)
+        return dist, mx
+     
+class MinPermDistCluster(object):
+    """
+    Minimize the distance between two clusters.  
+     
+    Parameters
+    ----------
+    niter : int
+        the number of basinhopping iterations to perform
+    verbose : boolean 
+        whether to print status information
+    accuracy :float, optional
+        accuracy for standard alignment which determines if the structures are identical
+    tol : float, optional
+        tolerance for an exact match to stop iterations
+    transform : 
+        Transform policy which tells MinpermDist how to transform the given coordinates
+    measure : 
+        measure policy which tells minpermdist how to perform certains measures on the coordinates.
+     
+    Notes
+    -----
+ 
+    The following symmetries will be accounted for::
+     
+    1. Translational symmetry
+    #. Global rotational symmetry
+    #. Permutational symmetry
+    #. Point inversion symmetry
+ 
+     
+    The algorithm here to find the best distance is
+     
+    for rotation in standardalignments:
+        optimize permutation
+        optimize rotation
+        check_match
+         
+    for i in range(niter):    
+        random_rotation
+        optimize permutations
+        align rotation
+        check_match
+         
+    The minpermdist algorithm is generic and can act on various types of
+    coordinates, e.g. carthesian, angle axis, .... The transform and measure
+    policies define and interface to manipulate and analyze a given set of
+    coordinates. If the coordinates don't have a standard format, custom policies
+    can be specified. As an example see the angle axis minpermdist routines.
+         
+    See also
+    --------
+    TransformPolicy, MeasurePolicy
+     
+    """
+    def __init__(self, niter=10, verbose=False, tol=0.01, accuracy=0.01,
+                 measure=MeasureAtomicCluster(), transform=TransformAtomicCluster()):
+         
+        self.niter = niter
+         
+        self.verbose = verbose
+        self.measure = measure
+        self.transform=transform
+        self.accuracy = accuracy
+        self.tol = tol
+         
+    def check_match(self, x1, x2, rot, invert):
+        """ check a given rotation for a match """
+        x2_trial = x2.copy()
+        if invert:
+            self.transform.invert(x2_trial)
+        self.transform.rotate(x2_trial, rot)
+ 
+ 
+        # get the best permutation
+        dist, perm = self.measure.find_permutation(x1, x2_trial)
+        x2_trial = self.transform.permute(x2_trial, perm)
+        
+        # now find best rotational alignment, this is more reliable than just
+        # aligning the 2 reference atoms
+        dist, rot2 = self.measure.find_rotation(x1, x2_trial)
+        self.transform.rotate(x2_trial, rot2)
+        # use the maximum distance, not rms as cutoff criterion
+         
+        dist =  self.measure.get_dist(x1, x2_trial)
+         
+        if dist < self.distbest:
+            self.distbest = dist
+            self.rotbest = np.dot(rot2, rot)
+            self.invbest = invert
+            self.x2_best = x2_trial    
+     
+    def finalize_best_match(self, x1):
+        """ do final processing of the best match """
+        self.transform.translate(self.x2_best, self.com_shift)
+        dist = self.measure.get_dist(x1, self.x2_best)
+        if np.abs(dist - self.distbest) > 1e-6:
+            raise RuntimeError        
+        if self.verbose:
+            print "finaldist", dist, "distmin", self.distbest
+ 
+        return dist, self.x2_best
+ 
+    def _standard_alignments(self, x1, x2):
+        """ get iterator for standard alignments """
+        return StandardClusterAlignment(x1, x2, accuracy=self.accuracy, 
+                                        can_invert=self.transform.can_invert())  
+        
+    def align_structures(self, coords1, coords2):        
+        """
+        Parameters
+        ----------
+        coords1, coords2 : np.array
+            the structures to align.  X2 will be aligned with X1, both
+            the center of masses will be shifted to the origin
+ 
+        Returns
+        -------
+        a triple of (dist, coords1, coords2). coords1 are the unchanged coords1
+        and coords2 are brought in best alignment with coords2
+        """
+ 
+        # we don't want to change the given coordinates
+        coords1 = coords1.copy()
+        coords2 = coords2.copy()
+         
+        x1 = np.copy(coords1)
+        x2 = np.copy(coords2)
+ 
+        com1 = self.measure.get_com(x1)
+        self.transform.translate(x1, -com1)
+        com2 = self.measure.get_com(x2)
+        self.transform.translate(x2, -com2)
+ 
+        self.com_shift = com1
+         
+        self.mxbest = np.identity(3)
+        self.distbest = self.measure.get_dist(x1, x2)
+        self.x2_best = x2.copy()
+         
+        # sn402: The unlikely event that the structures are already nearly perfectly aligned.
+        if self.distbest < self.tol:
+            dist, x2 = self.finalize_best_match(coords1)
+            return self.distbest, coords1, x2
+         
+        for rot, invert in self._standard_alignments(x1, x2):
+            self.check_match(x1, x2, rot, invert)
+            if self.distbest < self.tol:
+                dist, x2 = self.finalize_best_match(coords1)
+                return dist, coords1, x2
+         
+        # if we didn't find a perfect match here, try random rotations to optimize the match
+        for i in range(self.niter):
+            rot = aa2mx(random_aa())
+            self.check_match(x1, x2, rot, False)
+            if self.transform.can_invert():
+                self.check_match(x1, x2, rot, True)
+ 
+        # TODO: should we do an additional sanity check for permutation / rotation?        
+         
+        dist, x2 = self.finalize_best_match(coords1)
+         
+        return dist, coords1, x2
+     
+    def __call__(self, coords1, coords2):
+        return self.align_structures(coords1, coords2)
+ 
+ 
+class MinPermDistAtomicCluster(MinPermDistCluster):
+    """ minpermdist for atomic cluster (3 carthesian coordinates per site)
+ 
+    Parameters
+    ----------
+ 
+    permlist : optional
+        list of allowed permutations. If nothing is given, all atoms will be
+        considered as permutable. For no permutations give an empty list []
+    can_invert : bool, optional
+        also test for inversion
+ 
+    See also
+    --------
+ 
+    MinPermDistCluster
+ 
+    """
+    def __init__(self, permlist=None, can_invert=True, **kwargs):
+        transform=TransformAtomicCluster(can_invert=can_invert)
+        measure = MeasureAtomicCluster(permlist=permlist)
+         
+        MinPermDistCluster.__init__(self, transform=transform, measure=measure, **kwargs)
+
+def q2aa(qin):
+    """
+    quaternion to angle axis
+    
+    Parameters
+    ----------
+    Q: quaternion of length 4
+    
+    Returns
+    -------
+    output V: angle axis vector of lenth 3
+    """
+    q = np.copy(qin)
+    if q[0] < 0.: q = -q
+    if q[0] > 1.0: q /= np.sqrt(np.dot(q, q))
+    theta = 2. * np.arccos(q[0])
+    s = np.sqrt(1. - q[0] * q[0])
+    if s < rot_epsilon:
+        p = 2. * q[1:4]
+    else:
+        p = q[1:4] / s * theta
+    return p
+
+def random_aa():
+    """return a uniformly distributed random angle axis vector"""
+    return q2aa(random_q())
+
+
+def aa2mx(aa):
+    a = np.linalg.norm(aa)
+    n = aa/a
+    x=n[0]
+    y=n[1]
+    z=n[2]
+    c = np.cos(a)
+    s = np.sin(a)
+    t = 1 - c
+    
+    return np.array([ [ t * x * x + c,     t * x * y - z * s,  t * x * z + y * s ],
+                      [ t * x * y + z * s, t * y * y + c    ,  t * y * z - x * s ],
+                      [ t * x * z - y * s, t * y * z + x * s,  t * z * z + c     ]])
+
+def random_q():
+    """
+    uniform random rotation in angle axis formulation
+    
+    Notes
+    -----
+    input: 3 uniformly distributed random numbers
+    uses the algorithm given in
+    K. Shoemake, Uniform random rotations, Graphics Gems III, pages 124-132. Academic, New York, 1992.
+    This first generates a random rotation in quaternion representation. We should substitute this by
+    a direct angle axis generation, but be careful: the angle of rotation in angle axis representation
+    is NOT uniformly distributed
+    """
+    from numpy import sqrt, sin, cos, pi
+
+    u = np.random.uniform(0, 1, [3])
+    q = np.zeros(4, np.float64)
+    q[0] = sqrt(1. - u[0]) * sin(2. * pi * u[1])
+    q[1] = sqrt(1. - u[0]) * cos(2. * pi * u[1])
+    q[2] = sqrt(u[0]) * sin(2. * pi * u[2])
+    q[3] = sqrt(u[0]) * cos(2. * pi * u[2])
+    return q
+
+def q2mx(qin):
+    """quaternion to rotation matrix"""
+    Q = qin / np.linalg.norm(qin)
+    RMX = np.zeros([3, 3], np.float64)
+    Q2Q3 = Q[1] * Q[2]
+    Q1Q4 = Q[0] * Q[3]
+    Q2Q4 = Q[1] * Q[3]
+    Q1Q3 = Q[0] * Q[2]
+    Q3Q4 = Q[2] * Q[3]
+    Q1Q2 = Q[0] * Q[1]
+
+    RMX[0, 0] = 2. * (0.5 - Q[2] * Q[2] - Q[3] * Q[3])
+    RMX[1, 1] = 2. * (0.5 - Q[1] * Q[1] - Q[3] * Q[3])
+    RMX[2, 2] = 2. * (0.5 - Q[1] * Q[1] - Q[2] * Q[2])
+    RMX[0, 1] = 2. * (Q2Q3 - Q1Q4)
+    RMX[1, 0] = 2. * (Q2Q3 + Q1Q4)
+    RMX[0, 2] = 2. * (Q2Q4 + Q1Q3)
+    RMX[2, 0] = 2. * (Q2Q4 - Q1Q3)
+    RMX[1, 2] = 2. * (Q3Q4 - Q1Q2)
+    RMX[2, 1] = 2. * (Q3Q4 + Q1Q2)
+    return RMX
 
 class chain:
     """a class for storing information about a chain"""
@@ -42,7 +978,7 @@ class chain:
     def getChainLength(self):
         return self.chainLength
 
-class fragment:
+class Fragment:
     """A class for storing information pertaining to a fragment"""
     def __init__(self, chains, preResList, postResList, NCapList, CCapList, filename):
         self.chains = chains
@@ -214,7 +1150,7 @@ def getInput():
     instructions = pdb.readTextFile(filename)
 
     # parse the input instructions
-    outfile, fragments, staples = parseInstructions(instructions)
+    outfile, fragments, staples, rotations = parseInstructions(instructions)
 
     proceed, errorMsg = validateInputConsistency(fragments, staples)
     
@@ -246,7 +1182,7 @@ def getInput():
             AGFilename = sys.argv[wordIndex + 1]
         wordIndex += 1
 
-    return outfile, fragments, staples, [PAG, atomgroups, AGFilename, relax]
+    return outfile, fragments, staples, rotations, [PAG, atomgroups, AGFilename, relax]
 
 # function to parse an instructions file read in as text
 def parseInstructions(instructions):
@@ -255,6 +1191,7 @@ def parseInstructions(instructions):
     fragments = []
     staples = []
     outfile = []
+    rotations = []
 
     #initialise blocktype - a state variable for controlling which list the output goes into
     blockType='None'
@@ -276,6 +1213,9 @@ def parseInstructions(instructions):
         if keyword == 'OUTPUTFILE':
             outfile = cp.copy(dataList[0])
 
+        if keyword == "ROTATION":
+            rotations.append( (int(cp.copy(dataList[0])), float(cp.copy(dataList[1]))) )
+
         # process a fragment block in the input file; use the same code to process fragments and staples
         if keyword in ['FRAGMENT', 'STAPLE']:
             # record the nature of the block (staple or fragment)
@@ -296,9 +1236,9 @@ def parseInstructions(instructions):
             # create a fragment object and append it to the list of the fragments or staples as appropriate
             # the fragment object constructor will load the atomic data from the file
             if blockType == 'FRAGMENT':
-                fragments.append(fragment(chains, preResList, postResList, NCap, CCap, infile))
+                fragments.append(Fragment(chains, preResList, postResList, NCap, CCap, infile))
             else:
-                staples.append(fragment(chains, preResList, postResList, NCap, CCap, infile))
+                staples.append(Fragment(chains, preResList, postResList, NCap, CCap, infile))
     
         #for the remaining keyword types just process each keyword statement accordingly and add the data to the various variables       
         if keyword == 'CHAIN':
@@ -316,7 +1256,7 @@ def parseInstructions(instructions):
         if keyword == 'CCAP':
             CCap = cp.copy(dataList)
                 
-    return outfile, fragments, staples
+    return outfile, fragments, staples, rotations
 
 def validateInputConsistency(fragments, staples):
 
@@ -369,7 +1309,7 @@ def align(static, mobile):
     try:
         rot = mindist.rotbest
     except:
-        rot=mindist.mxbest
+        rot = mindist.mxbest
        
     # obtain the coordinates of all mobile atoms
     allMobileXYZ = mobile.extractAllXYZ()
@@ -397,21 +1337,24 @@ def writePDB(fragments, filename):
     except:
         raise Exception, "Unable to open output file: " + filename
 
-    # scan through the all fragments and obtain all the distinct chain names throughout the construct, uses the set functionallity
-    chainNamesAll=sorted(list(set([ item for sublist in [fragment.getChainNames() for fragment in fragments] for item in sublist])))
+    chainNames = [fragment.getChainNames() for fragment in fragments]
+
+    # create a single flattened list of unique chain names
+    chainNamesAll=sorted(list(set([ item for sublist in chainNames for item in sublist])))
     
     # initialise counters
     atomNum = 1
     residueNum = 1
-
+    fragmentAtoms = []
     # output each unique chain in the entire construct one chain at a time
     for chain in chainNamesAll:
         for fragment in fragments:
             # write all the information in the current lists of fragment for the given chain, adding caps to that chain if requested 
             # start residue and atomic numbering from atomNum and residueNum.
             # function returns the atomNum and residueNum of the next atom and residue to be written
-            [atomNum, residueNum] = writeChainFragmentToPDB(fileHandle, fragment, chain, atomNum, residueNum)
-
+            [atomNum, residueNum, chainAtoms] = writeChainFragmentToPDB(fileHandle, fragment, chain, atomNum, residueNum)
+            fragmentAtoms += chainAtoms
+        
         # at the end of each chain write 'TER'
         fileHandle.write('TER\n')
 
@@ -420,7 +1363,7 @@ def writePDB(fragments, filename):
     fileHandle.close()
 
 
-    return
+    return fragmentAtoms
 
 def writeAtomGroups(fragments, outfile, atomFile):
 
@@ -583,11 +1526,13 @@ def writeAtomGroup(axisAtom1, axisAtom2, groupAtoms, frag, group, fH):
 
 # Looks up all the bits of a fragment which belong to a specific chain 
 # and outputs to a PDB, capping the top or bottom if instructed to do so
+# build up an atom list to return as we go
 def writeChainFragmentToPDB(fH, frag, chainName, atomNumOut, resNumOut):
 
     # extract the atoms from the fragment belonging to a particular chain 
     atoms = frag.extractChainAtoms(chainName)
-
+    # array to output list of atoms
+    chainAtoms = []
     #check that the current fragment has atoms belonging to the current chain. If not then bug out.
     if atoms:
         # Add an ACE cap if required. estimate the coords for the C of the ACE
@@ -595,6 +1540,7 @@ def writeChainFragmentToPDB(fH, frag, chainName, atomNumOut, resNumOut):
             CPos=frag.estimateNextResidueC(chainName)
             l = 'ATOM {: >06d} {: <4}{:1}{:3} {:1}{: >4d}{:1}   {: >8.3f}{: >8.3f}{: >8.3f}\n'.format(atomNumOut, 'C', '', 'ACE', chainName, int(resNumOut),'',CPos[0],CPos[1],CPos[2])
             fH.write(l)
+            chainAtoms.append([atomNumOut, 'C', '', 'ACE', chainName, int(resNumOut), '', CPos[0], CPos[1], CPos[2], 0.0, 0.0, '', 'C', ''])
             atomNumOut += 1
             resNumOut += 1
      
@@ -626,6 +1572,7 @@ def writeChainFragmentToPDB(fH, frag, chainName, atomNumOut, resNumOut):
      
             # write the atom to the file
             l = pdb.pdbLineFromAtom(atom)  # includes carriage return
+            chainAtoms.append(atom)
             fH.write(l)
             atomNumOut += 1
     
@@ -640,10 +1587,11 @@ def writeChainFragmentToPDB(fH, frag, chainName, atomNumOut, resNumOut):
             NPos=frag.estimateNextResidueN(chainName)
             l = 'ATOM {: >06d} {: <4}{:1}{:3} {:1}{: >4d}{:1}   {: >8.3f}{: >8.3f}{: >8.3f}\n'.format(atomNumOut, 'N', '', 'NME', chainName, int(resNumOut),'',NPos[0],NPos[1],NPos[2])
             fH.write(l)
+            chainAtoms.append([atomNumOut, 'N', '', 'NME', chainName, int(resNumOut), '', NPos[0], NPos[1], NPos[2], 0.0, 0.0, '', 'N', ''])
             atomNumOut += 1
             resNumOut += 1
 
-    return atomNumOut, resNumOut
+    return atomNumOut, resNumOut, chainAtoms
 
 def exploreAngles():
     try:
@@ -668,6 +1616,48 @@ def exploreAngles():
 
     return
 
+def doRotations(rotations, atoms):
+
+    # create lists of residue nums about whose C and CA we must rotate, and the angle to rotate by 
+    residueNums = [ int(r[0]) for r in rotations]
+    angles = [ float(r[1])*np.pi/180 for r in rotations]
+    
+    # extract a numpy array of the atom positions
+    atomXYZ = np.array([[atom[7], atom[8], atom[9]] for atom in atoms ])
+        
+    # get a list of the residNums and atom type for each atom.
+    resAtoms = [[int(atom[5]), atom[1]] for atom in atoms]
+
+    # get the index of the Oxygen in each residue of interest.    
+    OIndices = [ resAtoms.index([res,'O']) for res in residueNums ]
+    
+    # get the index of the CA in each residue of interest.
+    CAIndices = [ resAtoms.index([res,'CA']) for res in residueNums ]
+    
+    # get the index of the C in each residue of interest.
+    CIndices = [ resAtoms.index([res,'C']) for res in residueNums ]
+    
+    print(len(CIndices), len(CAIndices), len(OIndices), len(angles), len(residueNums) )        
+
+    # loop through all the specified rotations
+    for CIndex, CAIndex, OIndex, angle, resNum  in zip(CIndices, CAIndices, OIndices, angles, residueNums):
+        print "Processing List from resnum: ", resNum, angle, OIndex, CIndex, CAIndex
+        
+        # Compute the NVec, from the latest array of positions
+        nVec = atomXYZ[CIndex] -atomXYZ[CAIndex]
+        nVec = nVec/np.linalg.norm(nVec)
+
+        # update the coords that need replacing
+        atomXYZ[OIndex:] = [ rotPAboutAxisAtPoint( p, atomXYZ[CIndex], nVec, angle) for p in atomXYZ[OIndex:] ]
+
+    print("updating atom array")
+    for i, pos in enumerate(atomXYZ):
+        atoms[i][7]= pos[0]
+        atoms[i][8]= pos[1]
+        atoms[i][9]= pos[2] 
+
+    # return the new atoms array
+    return atoms
 
 
 # Main Routine
@@ -681,26 +1671,44 @@ if __name__ == '__main__':
 
     example instruction file: 
     first line is the output filename.
-    Then we have a fragment block which has the data filename for that block. 
-    The start and end residues of each chain are identified using the numbering 
-    system in the pdb file.
-    PREV specifies the list of residues (one for each chain) which links to the previous molecule.
-    NEXT specifies the list of residues (one for each chain) which links to the next molecule.
+    A FRAGMENT keyword starts a block and specifie the data filename for that block.
+    
+    All the atoms from the input PDB are read in verbatim. They will all be read out again into the
+    new stapled object but with new coords. Each residue in the file should have a unique residue number.
+     
+    CHAIN specified the start and end residues of each chain in the fragment as identified using the numbering 
+    system in the pdb file. This is simply to help with labelling the chains in the final output PDB.
+    
+    PREV specifies a set of residues from this fragment which are to be aligned with a set of the same size in the previous object.
+    NEXT specifies a set of residues from this fragment which are to to align with a set of the same size in the next object. 
+    
     NCAP specifies the chains which will have an N terminal acetyl cap. 
     CCAP specifes the chains which will have an C terminal cap.
     for the caps only a place holder N atom or C atom is inserted without specifying atomic co-ordinates. tleap can
     add the remaining cap atoms in a sensible way.
 
-    routine then recurses through the list. first fragment is kept fixed. the "prev" residues of the staple are aligned
-    with the next residue of the stationary fragment.   Then the staple in its new position is kept fixed, and the next fragment
+    The routine then recurses through the list. First fragment is kept fixed. the "prev" residues of the staple are aligned
+    with the set of next residues of the stationary fragment. These sets of atoms must be the same size. 
+    
+    Then the staple in its new position is kept fixed, and the next fragment
     is aligned with the staple. The prev residues of the fragment are aligned with the next residues of the staple. 
 
-    The alignment takes the N CA and C atoms of all the residues (one from each chain) and aligns all the residues at the same time.
+    The alignment takes the N CA and C atoms of all the specified residues and aligns all of them  
+    at the same time.
 
-    The rotation matrix is then acquired and used to rotate all the atoms in the residue simultaneously.
+    The rotation matrix is then acquired and used to rotate all the atoms in the Fragment simultaneously.
 
     It is up to the user to ensure the adjacent fragments/staples are consistent with each other.
 
+    All the stuff with chains is about making this disparate chains in distinct fragments line up, but then be  
+    labelled in the output as continuous chains with the same letter. This was modification for collagen.
+    
+    Eg a block with three chains, can be aligned with another block containing three chains, and the output will
+    consist of three chains.  
+
+    A ROTATION command species a residue in the fully stapled structure which identifies an axis between 
+    a specific C and CA bond and rotates all atoms from the C onwards to the end of the fully stapled chain
+    by that amount.  One can specify as many rotations as you like.  
  
     OUTPUTFILE H12.pdb
 
@@ -731,7 +1739,8 @@ if __name__ == '__main__':
 
     # load the instruction file which contains two lists 
     # a list of fragments and a list of staples In ORDER. 
-    [outFile, fragments, staples, afterEffects] = getInput()
+    print "loading data"
+    [outFile, fragments, staples, rotations, afterEffects] = getInput()
 
 
     print "Stapling the following fragments:"
@@ -745,10 +1754,14 @@ if __name__ == '__main__':
     print '\nOutput filename:'
     print outFile
 
+    print '\nRotations:'
+    print rotations
+
+
     # count the staples
     numStaples = len(staples)
 
-    # initialise output list with a copy of the first fragment
+    # initialise output list (alignedFragments) with a copy of the first fragment
     alignedFragments = [fragments[0]]
     alignedStaples = []
 
@@ -768,8 +1781,17 @@ if __name__ == '__main__':
 
     # output the pdb files
     writePDB(alignedStaples, 'staples.pdb')
-    writePDB(alignedFragments, outFile)
-
+    atoms = writePDB(alignedFragments, outFile)
+    
+    # loads the combined pdb and performs rotations as defined. Totally ignores chains.
+    # just goes by residue number. Worked for what I wanted at the time. Soz. 
+    atoms = doRotations(rotations, atoms)
+    
+    # convert atoms chain to strings
+    l_atoms = [pdb.pdbLineFromAtom(atom) for atom in atoms]
+    
+    # write strings to file with a rot_<outfile> prefix
+    pdb.writeTextFile( l_atoms, 'rot_' + outFile)
 
     # control behaviour from command line
     PAG = afterEffects[0]

@@ -36,6 +36,8 @@ command is one of:
         and calls CUDAGMIN for a bunch of steps with CISTRANS checking turned off. 
 	Loops until the lowest energy minimum has no CIS peptide bonds
        
+    centrePDB CPDB or cPDB inpfile
+        translates the PDB to it's centre of mass frame and outputs identical pdb with only coords modified.
 
     generateCTAtomGroups, GCTAG infile
         takes a initial_cis_trans_state file and creates an atomgroups file for all the CIS peptide bonds. Uses information
@@ -69,11 +71,12 @@ command is one of:
         to basic atom type. All Cs are called C, all H1, HE1 etc become H.  Reduces number of objects
 	loaded into blender
 
-    makeXYZforBlender ir mXB inpfile
-        reads the PDB and dumps the CA residues as an XYZ file, but relabels the atom types according 
-        to the functional nature of the amino acid that the CA belongs to. Don't ask. It's for loading
-        the CAs into blender using it's XYZ importer, and this generates a different colour for each type 
-        of residue
+    makeXYZforBlender ir mXB inpfile backboneOnly mode
+        reads the PDB and creates and xyz for reading into blender. If backboneOnly is 1, then it dumps 
+        the CA residue as an XYZ file. Atoms in each residues labelled according to the mode. 
+        1 = functional nature of the amino acid that the CA belongs to which generates a different colour for each type 
+        of residue 
+        2 = Each of the twenty residues and IMB for PLPs -> A unique atom. 
     
     ramachandran or rmc inpfile
         Makes a ramachandran plot of the pdb file.
@@ -147,11 +150,15 @@ command is one of:
             symmetrize forcefield inpfile_preSym.prmtop inpfile.prmtop
             renameTermini inpfile_preSym.prmtop inpfile_preSym.pdb
     
-    readSequence or rsq,RSQ  inpDB mode [outputfile]
-        reads the sequence from the PDB and outputs into file.
-        enables easy editing of the PDB sequence. Appends a .seq to the filename by default. Mode=1 yields a numbered 
-        list of residues. Mode =2 yields a list of three letter residue codes in a format suitable for a modifySequence
-        command. Mode =3 yields a string of single chars representing each residue with the standard letters. 
+    readSequence or rsq,RSQ  inpDB mode [width] 
+        reads the sequence from the PDB and outputs into file with a .seq on the end.
+        Enables easy editing of the PDB sequence. 
+            Mode = 1 yields a numbered list of residues. 
+            Mode = 2 yields a list of three letter residue codes in a format suitable for modifySequence.
+            Mode = 3 yields a string of single chars representing each residue with the standard letters.
+            Mode = 4 is three letter codes separated by spaces. 
+            Mode = 5 uses an optional width parameter to output 1 letter codes in lines width chars long 
+                     as per fasta file format. Defaults to 80 if omitted.
     
     modifySequence or MS  inpPDB newSequence startResidue [outputfile]
         Replaces the sequence names in inpPDB with the sequence in the file newSequence
@@ -176,7 +183,7 @@ command is one of:
         in the topologyFile. The topologyFile is overwritten. If Flag is 0 the topology file is
         output without the Ns and Cs. If Flag is 1 the topology file is output with the Ns and Cs.
     
-    renumberRes or RN inpfile [outfile]
+    renumberRes or RN inpfile [startNum] [outfile]
         starts numbering residues at the beginning of a file and everytime it finds a Nitrogen increments
         the residue number. outputs using standard rules.  looksfor inpFile or inpFile.pdb and if outfile
         is not specified writes to inpFile_ren.pdb.
@@ -295,7 +302,12 @@ command is one of:
         else:
             print "fragmentPDB: Must specify inpfile and resflle:  fpdb inpfile resfile"
             exit(1)
-
+            
+    elif command in [ 'centrePDB', 'CPDB', 'cPDB', 'cpdb']:
+        if len(sys.argv)!=3:
+            print "cPDB: Must specify inpfile:  cPDB inpfile"
+            exit(1)
+            
     elif command in ['eliminateCIS', 'eCIS']:
         if len(sys.argv)!=3:
             print "eCIS: Must specify inpfile:   eCIS inpfile"
@@ -371,12 +383,17 @@ command is one of:
 
     # make xyz for blender
     elif command in ['makeXYZForBlender', 'mXB', 'mxb']:
+        fileroot = pl.fileRootFromInfile(infile)
+        outfile = fileroot + '.xyz'
         if len(sys.argv)==3:
-            params = pl.fileRootFromInfile(infile)
-            params = params + '.xyz'
+            # backbone only, give each residue a unique name 
+            params = [1, 2, outfile]
+        elif len(sys.argv)==5:
+            params = [ int(sys.argv[3]), int(sys.argv[4]), outfile ]
         else:
-            params = sys.argv[3]
-        print "mXB params: " + params
+            print usage
+            sys.exit()
+        print "mXB params: ", params
 
     # Fix Chirality
     elif command in ['fixchirality', 'fc', 'FC','fC','Fc']:
@@ -470,14 +487,14 @@ command is one of:
     #### read Sequence
     elif command in ['readSequence','rsq','RSQ']:
         if len(sys.argv)<4:
-            print "readSequence input.pdb mode [output.pdb]"
+            print "readSequence input.pdb mode [width]"
             exit(1)
         elif len(sys.argv)==4: 
             params=[sys.argv[3]]
-            params.append( pl.fileRootFromInfile(infile) + '.seq' )
         else:
             params=sys.argv[3:]
             
+        params.append( pl.fileRootFromInfile(infile) + '.seq' )
         l = "readSequence params: "
         for p in params:
             l = l + str(p) + ' '
@@ -721,6 +738,9 @@ if __name__ == '__main__':
         elif command in ['fragmentPDB', 'fragmentpdb', 'fpdb', 'fPDB', 'FPDB']:
             pl.fragmentPDB(infile, params)
         
+        elif command in [ 'centrePDB', 'CPDB', 'cPDB', 'cpdb']:
+            pl.centrePDB(infile)
+        
         elif command in ['generateCTAtomGroups', 'GCTAG']:
             pl.generateCTAtomGroups(infile)
 
@@ -743,25 +763,25 @@ if __name__ == '__main__':
             pl.groupAtomsXYZ(infile, params)
         
         elif command in ['makeXYZForBlender','mXB','mxb']:
-            pl.makeXYZForBlender(infile, params)
+            pl.makeXYZForBlender(infile, params[0], params[1], params[2])
         
         elif command in ['fixchirality','fc','FC','fC','FC']:
-            pl.fixchirality(infile,params)
+            pl.fixchirality(infile, params)
         
         elif command in ['writepucker','wp']:
-            pl.writepucker(infile,params)
+            pl.writepucker(infile, params)
         
         elif command in ['removeatoms','ra']:
-            pl.removeLineList(infile,params)
+            pl.removeLineList(infile, params)
         
         elif command in ['prepAmberGmin','PAG','pAG','pag']:
-            pl.prepAmberGMin(infile,params)
+            pl.prepAmberGMin(infile, params)
         
         elif command in ['flipCT', 'fct']:
             pl.flipCT(infile, params)
         
         elif command in ['renameTermini','rt','rT','RT']:
-            pl.renameTerminiTop(params[1],infile,int(params[0]))
+            pl.renameTerminiTop(params[1],infile, int(params[0]))
         
         elif command in ['renumberRes','rn','rN','RN']:
             pl.renumberResidues(infile,params[0],params[1])
@@ -785,8 +805,11 @@ if __name__ == '__main__':
             pl.modifySequence(infile,params[0],params[1],params[2])
         
         elif command in ['readSequence','rsq','RSQ']:
-            pl.readSequence(infile,int(params[0]),params[1])
-        
+            if len(params)==2:
+                pl.readSequence(infile, int(params[0]), params[1], width=80)
+            else:
+                pl.readSequence(infile, int(params[0]), params[2], width=int(params[1]))
+            
         elif command in ['puckergroups','pg','pG','Pg','PG']:
             pl.puckerGroups(infile,params[0],params[1])
         
