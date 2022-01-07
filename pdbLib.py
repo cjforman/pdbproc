@@ -1,6 +1,9 @@
 #!/usr/bin/env python
 import sys, os
 import numpy as np
+import string as strg
+import matplotlib.pyplot as plt  
+from scipy.optimize import fmin_l_bfgs_b
 from itertools import chain
 from mpl_toolkits.mplot3d import proj3d
 from matplotlib.patches import FancyArrowPatch
@@ -17,7 +20,6 @@ class Arrow3D(FancyArrowPatch):
         xs, ys, zs = proj3d.proj_transform(xs3d, ys3d, zs3d, renderer.M)
         self.set_positions((xs[0],ys[0]),(xs[1],ys[1]))
         FancyArrowPatch.draw(self, renderer)
-
 
 def generateRigidBodyInput(infile, Cis_Trans_File):
 
@@ -117,26 +119,24 @@ def loadChiralCentres(chiralFile):
                   'H': entry[4]}  for entry, chirality in zip(chiralData[0::2], chiralData[1::2]) ]
    
 
-def flipChirality(infile, chiralFile, outcoordsFile, outPDB):    
-    
-    # load the coords and inf from the pdb.
-    pdbAtoms = readAllAtoms(infile)
-    
-    chiralList = loadChiralCentres(chiralFile)
- 
-    for stereoCenter in chiralList:
-        if stereoCenter['state']=='T':
-            curResidue = getResidue(stereoCenter['CA'])
-            newResidue  = flipResidueChirality( curResidue )
-            pdbAtoms = replaceResidueCoords( pdbAtoms, newResidue )
+#def flipChirality(infile, chiralFile, outcoordsFile, outPDB):    
+#    
+#    # load the coords and inf from the pdb.
+#    pdbAtoms = readAllAtoms(infile)
+#    
+#    chiralList = loadChiralCentres(chiralFile)
+# 
+#    for stereoCenter in chiralList:
+#       if stereoCenter['state']=='T':
+#           curResidue = getResidue(stereoCenter['CA'])
+#           newResidue = flipResidueChirality( curResidue )
+#            pdbAtoms = replaceResidueCoords( pdbAtoms, newResidue )
+#
+#    writeCoordsFile(pdbAtoms, outcoordsFile)
+#    replacePdbAtoms(infile, newCoords, outPDB)
 
-    writeCoordsFile(pdbAtoms, outcoordsFile)
-    replacePdbAtoms(infile, newCoords, outPDB)
-
-
-
-def getResidue():
-    pass
+#def getResidue():
+#    pass
 
     
 def writeCoordsFile(atoms, filename):
@@ -169,16 +169,16 @@ def eliminateCIS(infile):
     # loop while there isn't a minimum with zero cis states
     while lowestNumCis>0:
 
-    # always start each run with the lowest inpcrds yet
-    os.system("cp lowest.rst coords.inpcrd")
+        # always start each run with the lowest inpcrds yet
+        os.system("cp lowest.rst coords.inpcrd")
 
         # get the list of atoms that are in the cis state in the lowest coords file
         lowestCISAtomgroupsList = checkFileForCIS("lowest.ct")
 
-    # make an atomGroups file for those cis bonds only. use the canonical pdb to help out but any pdb would do.
-    makeAtomGroupsFile(lowestCISAtomgroupsList, canonicalPdbAtoms)
+        # make an atomGroups file for those cis bonds only. use the canonical pdb to help out but any pdb would do.
+        makeAtomGroupsFile(lowestCISAtomgroupsList, canonicalPdbAtoms)
 
-    print("Calling CUDAGMIN")
+        print("Calling CUDAGMIN")
 
         # call the CUDAGMIN operation. The current atoms groups will try to spin a bunch of times.
         os.system( "CUDAGMIN" )
@@ -186,16 +186,16 @@ def eliminateCIS(infile):
         # find the pdb with the lowest number of cis 
         newLowestNumCis, newLowestPdb = findBestCoords("coords.*.pdb")
  
-    # check to see if the pdb with the lowest number of cis is lower than the current lowest
-    if newLowestNumCis < lowestNumCis:
+        # check to see if the pdb with the lowest number of cis is lower than the current lowest
+        if newLowestNumCis < lowestNumCis:
             # if so then keep it.
-        lowestNumCis = newLowestNumCis
-           
+            lowestNumCis = newLowestNumCis
+               
             os.system("cp " + newLowestPdb + " lowest.pdb")
             os.system("cp " + newLowestPdb[0:-4] + ".rst lowest.rst")
             os.system("cp " + lowestPdb + ".ct lowest.ct")
-
-    print("lowest on this run: " + str(newLowestNumCis) + " lowest so far: " + str(lowestNumCis))
+    
+        print("lowest on this run: " + str(newLowestNumCis) + " lowest so far: " + str(lowestNumCis))
 
 
 def createCTFile(infile, params):
@@ -1757,7 +1757,7 @@ def readPuckerData(filename):
             if data[1]=='HYP' or data[1]=='PRO':
                 puckStateList.append([int(data[0]),data[1],data[2]])
     except:
-        print("Unable to read pucker file:"+filename) )
+        print("Unable to read pucker file:" + filename)
         sys.exit(1)
 
     return puckStateList
@@ -2296,12 +2296,12 @@ def flipCT(infile, params):
     # having performed all the rotations to flip the Cis/trans now PAG the final file with the given force field. 
     prepAmberGMin(currentFile, ['noreduce', forcefield])
     
-    for file in cleanup:
-        if file==infile:
+    for fileN in cleanup:
+        if fileN==infile:
             pass
         else:
-            if ('leap' not in file):
-                os.system("rm " + file)
+            if ('leap' not in fileN):
+                os.system("rm " + fileN)
 
 
 def prepAmberGMin(infile, params, renameTermini=True):
@@ -2413,7 +2413,7 @@ def renumberResidues(infile, startNum, outfile):
         if vals[0] in ['ANISOU']:
             skip=1
 
-         #if we are dealing with an atom or hetatom
+        #if we are dealing with an atom or hetatom
         if vals[0] in ['HETATM', 'ATOM']:
             
             #parse the pdb line
@@ -3020,7 +3020,7 @@ def cpoa(p1List,p2List,p3List,p4List):
     mub - distance from p1 to pb.'''
     p13List=[p1-p3 for p1,p3 in zip(p1List,p3List)]
     p43List=[(p4-p3)/np.linalg.norm(p4-p3) for p4,p3 in zip(p4List,p3List)]
-    p21List=[(p2-p1)/linalg.norm(p2-p1) for p2,p1 in zip(p2List,p1List)]
+    p21List=[(p2-p1)/np.linalg.norm(p2-p1) for p2,p1 in zip(p2List,p1List)]
     
     d1343List=[np.dot(p13,p43) for p13,p43 in zip(p13List,p43List)]
     d4321List=[np.dot(p43,p21) for p43,p21 in zip(p43List,p21List)]
@@ -3181,7 +3181,7 @@ def readResidueSymmetry(atoms):
         CAYList.append(CAY)
 
     #Take the mean of the first atom in each chain to be the base of the helix
-    basePoint3Space=mp.mean([AllAtomList[0][0],AllAtomList[1][0],AllAtomList[2][0]],0)
+    basePoint3Space=np.mean([AllAtomList[0][0],AllAtomList[1][0],AllAtomList[2][0]],0)
 
     #Take the radius guess as the average of the distances from the basePoint3Space to the start of each chain
     radiusGuess=np.mean([np.linalg.norm(AllAtomList[0][0]-basePoint3Space),np.linalg.norm(AllAtomList[1][0]-basePoint3Space),np.linalg.norm(AllAtomList[2][0]-basePoint3Space)])
@@ -3693,7 +3693,7 @@ def readSymmetryFromAtoms(atoms,capRes,plotFig):
     
     #Set the bounds; the phi and theta bounds are set to be a more than pi to allow wrap arounds. It tended to get stuck at pi and not know that it could move beyond... seems to work...
     #If the gradient is going up when a parameter hits the boundary it stays there. If it can go past the boundary and the gradient becomes -ve it jumps away from the boundary...
-    bounds=[(0,radiusRange),(-0.1*pi,2.5*pi),(-2.5*pi,2.5*pi),(basePoint2Space[0]-radiusRange,basePoint2Space[0]+radiusRange),(basePoint2Space[1]-radiusRange,basePoint2Space[1]+radiusRange)]
+    bounds=[(0,radiusRange),(-0.1*np.pi,2.5*np.pi),(-2.5*np.pi,2.5*np.pi),(basePoint2Space[0]-radiusRange,basePoint2Space[0]+radiusRange),(basePoint2Space[1]-radiusRange,basePoint2Space[1]+radiusRange)]
     
     #create a function pointer - fig is for plotting out stuff on the fly to monitor progress if desired
     f=(lambda x: radialDistanceProjectionSum(x,AllAtomsListFlat,fig1))
@@ -3889,7 +3889,7 @@ def XYZTo3DPolar(v):
     r=np.linalg.norm(v)
     vHat=v/r
     phi=np.arccos(vHat[2])
-    theta=np.atan2(vHat[1],vHat[0])
+    theta=np.arctan2(vHat[1],vHat[0])
     return np.array([r,theta,phi])
 
 def RMSDBetweenChains(x,basePoint,ZVec,list1,list2,fig):

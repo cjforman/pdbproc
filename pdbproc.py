@@ -1,8 +1,6 @@
 #!/usr/bin/env python
 import sys
 import os
-import numpy as np
-import scipy as sp
 import pdbLib as pl
 
 def commandLineProc():
