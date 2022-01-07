@@ -1379,7 +1379,7 @@ def writeAtomsToTextFile(atoms, filename):
         vst = open(filename, 'w')
     except IOError as e:
         print("I/O error({0}): {1}".format(e.errno, e.strerror) )
-        raise Exception, "Unable to open output file: "+filename
+        raise Exception("Unable to open output file: " + filename)
 
     #parse data 
     for atom in atoms:
@@ -1394,7 +1394,7 @@ def readTextFile(filename):
         vst = open(filename, 'r')
     except IOError as e:
         print("I/O error({0}): {1}".format(e.errno, e.strerror) )
-        raise Exception, "Unable to open input file: " + filename
+        raise Exception( "Unable to open input file: " + filename )
     lines = vst.readlines()
     vst.close()
     return lines
@@ -1404,7 +1404,7 @@ def writeTextFile(lines, filename):
     try:
         vst = open(filename, 'w')
     except:
-        raise Exception, "Unable to open output file: "+filename
+        raise Exception( "Unable to open output file: " + filename )
     for line in lines:
         a=line
         vst.write(a)
