@@ -1379,7 +1379,7 @@ def writeAtomsToTextFile(atoms, filename):
         vst = open(filename, 'w')
     except IOError as e:
         print("I/O error({0}): {1}".format(e.errno, e.strerror) )
-        raise Exception("Unable to open output file: " + filename)
+        raise Exception( "Unable to open output file: " + filename )
 
     #parse data 
     for atom in atoms:
@@ -1767,7 +1767,7 @@ def writePuckerData(outfile,pucker):
     try:
         vst = open(outfile, 'w')
     except:
-        raise Exception, "Unable to open outfile: "+outfile
+        raise Exception( "Unable to open outfile: " + outfile )
     for puck in pucker:
         try:
             outStr=str(puck[0])+' '+puck[1]+' '+puck[2]+'\n'
