@@ -32,7 +32,7 @@ command is one of:
     
     checkTorsion or ct or cT or CT inpfile [outfile]
    
-    crankShaftGroups, crankshaftgroups, csg inpfile nnCutoff dCutoff probSelect include sidegroups 
+    crankShaftGroups, crankshaftgroups, csg inpfile nnCutoff dCutoff rotScale include sidegroups 
         Take a pdb and generates an atomgroups file for the GMIN rotategroups command which defines a set of rotation groups 
         consisting of the intervening chain between pairs of carbon alphas.
         
@@ -48,7 +48,7 @@ command is one of:
         The final list of pairs of CA is checked and any pairs whose distance along the chain is > nnCutoff will 
             be eliminated.  And pairs of CAs < nnCutoff that are more than dCutoff away will also be eliminated. 
 
-        probSelect determines the probability that each particular cranks shaft rotation will be selected.
+        rotScale determines the rotationScale that each particular cranks shaft rotation will be selected as percentage of 2*pi:w
             
         Include is flag that is true (1) or false (0) and specifies whether or not the side chain on the CA is included in the 
         rotation group or not. Default: 0.   
@@ -340,7 +340,7 @@ command is one of:
 
     elif command in ['crankShaftGroups', 'crankshaftgroups', 'csg']:
         if len(sys.argv)!=8:
-            print("crankShaftGroups: usage inpfile nncutoff ddcutoff probSelect includesidechains(1/0) sidechains(1/0)")
+            print("crankShaftGroups: usage inpfile nncutoff ddcutoff rotScale includesidechains(1/0) sidechains(1/0)")
             exit(1)
         else:
             params=sys.argv[3:]
@@ -774,7 +774,7 @@ if __name__ == '__main__':
 
         elif command in ['crankShaftGroups', 'crankshaftgroups', 'csg']:
             print(params)
-            pl.crankShaftGroups(infile, int(params[0]), float(params[1]), scaleFactor=float(params[2]), includeSideChains=bool(int(params[3])), rotateSideGroups=bool(int(params[4])) )
+            pl.crankShaftGroups(infile, int(params[0]), float(params[1]), rotScale=float(params[2]), includeSideChains=bool(int(params[3])), rotateSideGroups=bool(int(params[4])) )
 
         elif command in ['fragmentPDB', 'fragmentpdb', 'fpdb', 'fPDB', 'FPDB']:
             pl.fragmentPDB(infile, params)
