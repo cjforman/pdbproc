@@ -189,7 +189,7 @@ def makeAtomGroupsFile(atomList, atoms):
 # segment of a chain between CAs that obey the restrictions.
 # Can include the side chains on the limiting CAs or not as desired
 # For good measure also can add all side chain rotations to the atomgroups file if desired 
-def crankShaftGroups(infile, nnCutoff, dCutoff, includeSideChains=False, rotateSideGroups=False, scaleFactor=0.1):
+def crankShaftGroups(infile, nnCutoff, dCutoff, includeSideChains=False, rotateSideGroups=False, rotScale=0.1):
     # get all the atoms
     atoms = readAllAtoms(infile)
     
@@ -239,7 +239,7 @@ def crankShaftGroups(infile, nnCutoff, dCutoff, includeSideChains=False, rotateS
     # de-index the CAList so the inputs to the sub routine are the actual CA atoms properties list
     for CAPair in CAPairs:
         # generate the rotation group dictionary and add it
-        atomGroupsDictList.append(createRotationGroupDict(atoms, CAList[CAPair[0]], CAList[CAPair[1]], probSelect, includeSideChains=includeSideChains, rotScaleFactor=scaleFactor))
+        atomGroupsDictList.append(createRotationGroupDict(atoms, CAList[CAPair[0]], CAList[CAPair[1]], probSelect, includeSideChains=includeSideChains, rotScaleFactor=rotScale))
 
     # if the rotate side group flag is set, then add all rotatable groups in sidechains in the protein to the list.
     if rotateSideGroups:
