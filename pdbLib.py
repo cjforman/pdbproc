@@ -2151,7 +2151,7 @@ def writePuckerData(outfile,pucker):
 def fileRootFromInfile(infile):
     fileroot=infile
     if ".pdb" in infile:
-        fileroot = strg.replace(infile,'.pdb','',1)
+        fileroot = infile.replace('.pdb','',1)
     return fileroot
 
 def readpucker(infile, params):
