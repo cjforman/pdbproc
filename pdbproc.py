@@ -15,7 +15,75 @@ where command and inpfile are mandatory. Command is the action to perform and in
 is the name of a PDB file in standard format. Each command takes variable number of parameters.
 
 command is one of:
+
+    addTermini inpfile N=-30,10 C
+        aliases: addTermini, addtermini, AddTermini, at, aT, AT 
+        Adds N or C terminus line to PDB (NME, ACE) if N and/or C are present in the params. 
+        A dihedral and bond angle pair may be specified for each terminus. 
+        otherwise default is 0, 109.
+        Bond length is difference between C and CA or CA and N in adjacent residue. 
+
+    centrePDB CPDB or cPDB inpfile
+        translates the PDB to it's centre of mass frame and outputs identical pdb with only coords modified.
+
+    checkPuckerPattern or cpp inpfile 
+        prints true or false if the pdb file contains a ring pucker system
+        whose endo and exo states match the endo and exo states of the standard collagen fibre.
     
+    checkTorsion or ct or cT or CT inpfile [outfile]
+   
+    crankShaftGroups, crankshaftgroups, csg inpfile nnCutoff dCutoff probSelect include sidegroups 
+        Take a pdb and generates an atomgroups file for the GMIN rotategroups command which defines a set of rotation groups 
+        consisting of the intervening chain between pairs of carbon alphas.
+        
+        All possible pairs of CAs in the pdb are chosen that satisfy both the nnCutOff and dCutoff constraints. 
+        
+        nnCutoff is the nearest neighbour cutoff and specifies the max number of aminoacids along the backbone between the chosen CAs.
+            Eg. nnCutoff=10 will iterate through each 10 residue sub-sequence on each chain to produce pairwise 
+            combinations of all pair of CAs in each 10 residue sub-sequence. 10-9, 10-8 and so on without reps (8-10, 9-10) etc. 
+        
+        dCutoff will find all CAs that are within euclidean distance dCutoff of each CA and produce pair wise combinations 
+            of CAs within that spatially bound region.  
+            
+        The final list of pairs of CA is checked and any pairs whose distance along the chain is > nnCutoff will 
+            be eliminated.  And pairs of CAs < nnCutoff that are more than dCutoff away will also be eliminated. 
+
+        probSelect determines the probability that each particular cranks shaft rotation will be selected.
+            
+        Include is flag that is true (1) or false (0) and specifies whether or not the side chain on the CA is included in the 
+        rotation group or not. Default: 0.   
+           
+        sidegroups is a flag that specifies whether or not the sidechains of ALL the amino acids are included as
+        atomgroups for rotation.  All possible rotatable subgroups of each sidechain are specified as rotation groups.
+        For prolines or closed rings, the end group is flipped as in a pucker flip. Default: 0    
+        
+   
+    convertseq, ConvertSeq, cs, cS, CS, Cs inpfile seqfile
+        Takes an input file which consists of single letter codes of a protein sequence, like a mode 3 sequence file 
+        from readSequence. Outputs a file with filename seqfile which has the three letter codes as per mode 2 of readSequence.
+        The three letter codes output file is compatible with the modify sequence command.  
+
+    createCTFile, cCTF inpfile thresh
+        generates a CIS_TRANS_STATE file for a given PDB
+        
+    eliminateCIS eCIS inpfile
+	    Calls the createCT algorithm to check if the lowest energy pdb has no CIS states
+	    if it does then it generates a new atomGroups file to rotate each half of the CIS peptide bonds by pi/2.
+        Then calls CUDAGMIN for a bunch of steps with CISTRANS checking turned off. 
+	    Loops until the lowest energy minimum has no CIS peptide bonds
+
+    fixChirality or fc inpfile [outfile]
+        Checks the chirality state of each proline and hydroxyproline  
+        in the inpfile. Output is resNum with an 2-X or 4-X where x is R or S.
+        If the chirality is not a 2-S 4-R state then it is converted to be so
+        and rewritten as a PDB. If not specified the output filename is ..._chi.pdb
+        
+        See readChirality command
+
+    flipCT fct inpfile cis_trans forcefield
+        Takes a cis trans file from gmin, and performs a series of rotations to convert all the cis peptides to trans.
+        Then runs it through the PAG process with a noreduce optionto generate a restart file
+
     fragmentPDB, fragmentpdb, fpdb, fPDB, or FPDB inpfile resfile 
     
         Generates a series of minipdbs based on the pairs of start and stop residues in resfile.
@@ -28,46 +96,14 @@ command is one of:
         1 100
         35 39
 
-    eliminateCIS eCIS inpfile
-	Calls the createCT algorithm to check if the lowest energy pdb has no CIS states
-	if it does then it generates a new atomGroups file to spin only the CIS peptide bonds
-        and calls CUDAGMIN for a bunch of steps with CISTRANS checking turned off. 
-	Loops until the lowest energy minimum has no CIS peptide bonds
-       
-    centrePDB CPDB or cPDB inpfile
-        translates the PDB to it's centre of mass frame and outputs identical pdb with only coords modified.
-
     generateCTAtomGroups, GCTAG infile
         takes a initial_cis_trans_state file and creates an atomgroups file for all the CIS peptide bonds. Uses information
         in the pdb file pointed at by infile to help construct the atomgroups file
-        
-    createCTFile, cCTF inpfile thresh
-        generates a CIS_TRANS_STATE file for a given PDB
-        
-    addTermini inpfile N=-30,10 C
-        aliases: addTermini, addtermini, AddTermini, at, aT, AT 
-        Adds N or C terminus line to PDB (NME, ACE) if N and/or C are present in the params. 
-        A dihedral and bond angle pair may be specified for each terminus. 
-        otherwise default is 0, 109.
-        Bond length is difference between C and CA or CA and N in adjacent residue. 
-
-    'convertseq', 'ConvertSeq', 'cs', 'cS', 'CS', 'Cs']
-    cs inpfile seqfile
-        Takes an input file which consists of single letter codes of a protein sequence, like a mode 3 sequence file 
-        from readSequence. Outputs a file with filename seqfile which has the three letter codes as per mode 2 of readSequence.
-        The three letter codes output file is compatible with the modify sequence command.  
-
-    readpucker or rp inpfile [outfile]
-        Checks the pucker state of each residue in inpfile.
-        looks for inpfile (automatically appends .pdb if it is not there) and
-        analyses the pucker state of each residue before outputting data into
-        outfile in a format of resId, resName, Endo|Exo. 
-        If outfile is omitted readpucker outputs data in inpfile.pucker.
 
     groupAtomsXYZ, gAX or gax inpfile
         reads the PDB and dumps the atoms XYZ file, but relabels the atom types according 
         to basic atom type. All Cs are called C, all H1, HE1 etc become H.  Reduces number of objects
-	loaded into blender
+    loaded into blender
 
     makeXYZforBlender ir mXB inpfile backboneOnly mode
         reads the PDB and creates and xyz for reading into blender. If backboneOnly is 1, then it dumps 
@@ -75,50 +111,24 @@ command is one of:
         1 = functional nature of the amino acid that the CA belongs to which generates a different colour for each type 
         of residue 
         2 = Each of the twenty residues and IMB for PLPs -> A unique atom. 
-    
-    ramachandran or rmc inpfile
-        Makes a ramachandran plot of the pdb file.
-        
-    readChirality or rc inpfile [outfile]
-        Checks the chirality state of each proline and hydroxyproline  
-        in the inpfile. Output is resNum with an 2-X or 4-X where x is R or S.
-        Generally should be an 2-S 4-R state.  if it is proline then just get a 2-R state.
-        If not specified the outfile is a .chi file.
 
-    fixChirality or fc inpfile [outfile]
-        Checks the chirality state of each proline and hydroxyproline  
-        in the inpfile. Output is resNum with an 2-X or 4-X where x is R or S.
-        If the chirality is not a 2-S 4-R state then it is converted to be so
-        and rewritten as a PDB. If not specified the output filename is ..._chi.pdb
-                    
-    writepucker or wp inpfile puckerStateFile [outfile]
-        sets the pucker state of each residue in the inpfile pdb to the status specified in puckerStateFile.
-        The pucker State file contains lines with the format resiD, resName, Endo|Exo.
-        Looks for inpfile (automatically appends .pdb if it is not there).
-        A pucker inversion operation is applied to prolines or hydroxyprolines which do not match the
-        required state. Outfile is an optional outputfilename. Outfile is omitted the output file name 
-        is inpFileRoot.pucker.pdb.
-    
-    checkPuckerPattern or cpp inpfile 
-        prints true or false if the pdb file contains a ring pucker system
-        whose endo and exo states match the endo and exo states of the standard collagen fibre.
-    
-    
-    removeAtoms or ra inpfile rulefile [outfile]
-        loads a pdb file and removes lines which match the specifications and then rewrites the pdb file. 
-        looks first for infile or infile.pdb and loads it. 
-        Then looks for the rulefile or rulefile.lines. which has the format:
-    
-    flipCT fct inpfile cis_trans forcefield
-        Takes a cis trans file from gmin, and performs a series of rotations to convert all the cis peptides to trans.
-        Then runs it through the PAG process with a noreduce optionto generate a restart file
-    
-    string integer
-        where string is the string which is contained in the ATOM line that qualifies it for removal, 
-        eg H, C, GLY or whatever.  integer is the zero based column number in which the text is to appear.
-        envisaged for use solely with the ATOM keyword. 
-        The rest of the PDB file is output verbatim, except for the lines which qualify.
-        if the outfile is not specified then the default is infile_short.pdb.
+    modifySequence or MS  inpPDB newSequence startResidue [outputfile]
+        Replaces the sequence names in inpPDB with the sequence in the file newSequence
+        starting from the startresidue in the input file. The side chain atoms of 
+        the old sequence are ignored and only the backbone atoms are output if the residue is different.
+        
+        Works by reading through inpPDB and dumping each line to the outputfile verbatim.
+        The number of residues copied across so far is counted and if the number of residues 
+        copied exceeds the value given in startresidue then the procedure begings to rename the residues.
+        If the new residue name is different from the existing residue name then only 
+        only backbone atoms are output. 
+        
+        IF the new sequence is longer than the original sequence then the procedure will simply
+        ignore the excess new residues. i.e. the final file will always be the same length as inpPDB.
+        IF new residues is shorter than inppdb then the last part of the inpPDB will be untouched. although
+        the atom numbers will be renumbered.
+
+        see readSequence Command
     
     prepAmberGmin or PAG inpfile rulefile forcefield [prepFile] [paramsFile]
         rulefile can be: 
@@ -147,64 +157,22 @@ command is one of:
             renameTermini inpfile_preSym.prmtop inpfile_preSym.pdb
             symmetrize forcefield inpfile_preSym.prmtop inpfile.prmtop
             renameTermini inpfile_preSym.prmtop inpfile_preSym.pdb
-    
-    readSequence or rsq,RSQ  inpDB mode [width] 
-        reads the sequence from the PDB and outputs into file with a .seq on the end.
-        Enables easy editing of the PDB sequence. 
-            Mode = 1 yields a numbered list of residues. 
-            Mode = 2 yields a list of three letter residue codes in a format suitable for modifySequence.
-            Mode = 3 yields a string of single chars representing each residue with the standard letters.
-            Mode = 4 is three letter codes separated by spaces. 
-            Mode = 5 uses an optional width parameter to output 1 letter codes in lines width chars long 
-                     as per fasta file format. Defaults to 80 if omitted.
-    
-    modifySequence or MS  inpPDB newSequence startResidue [outputfile]
-        Replaces the sequence names in inpPDB with the sequence in the file newSequence
-        starting from the startresidue in the input file. The side chain atoms of 
-        the old sequence are ignored and only the backbone atoms are output if the residue is different.
-        
-        Works by reading through inpPDB and dumping each line to the outputfile verbatim.
-        The number of residues copied across so far is counted and if the number of residues 
-        copied exceeds the value given in startresidue then the procedure begings to rename the residues.
-        If the new residue name is different from the existing residue name then only 
-        only backbone atoms are output. 
-        
-        IF the new sequence is longer than the original sequence then the procedure will simply
-        ignore the excess new residues. i.e. the final file will always be the same length as inpPDB.
-        IF new residues is shorter than inppdb then the last part of the inpPDB will be untouched. although
-        the atom numbers will be renumbered.
-    
-    
-    renameTermini or rT inpfile flag [topologyfile]
-        looks for the pdb inpfile or inpfile.pdb and loads it. Then it scans for inpfile.prmtop
-        or topologyFile and then adds or removes Ns and Cs to the N and C termini of each chain
-        in the topologyFile. The topologyFile is overwritten. If Flag is 0 the topology file is
-        output without the Ns and Cs. If Flag is 1 the topology file is output with the Ns and Cs.
-    
-    renumberRes or RN inpfile [startNum] [outfile]
-        starts numbering residues at the beginning of a file and everytime it finds a Nitrogen increments
-        the residue number. outputs using standard rules.  looksfor inpFile or inpFile.pdb and if outfile
-        is not specified writes to inpFile_ren.pdb.
-    
-    sortRes or sR inpfile sortFile [outfile]
-        Outputs the residues in the infile in the order specified in the sortFile and then 
-        renumbers residues starting at 1. looks for inpFile or inpFile.pdb and if outfile is not specified
-        writes to inpFile_sort.pdb
-    
-    removeDup or rd inpfile [outfile]
-        Removes duplicate atoms by assessing the xyz position of each atom and makes sure it
-        isn't output. Looks for inpFile or inpFile.pdb and if outfile is not specified
-        writes to inpFile_noDup.pdb
+
+    puckerBreakDown PBD or pbd inpfile
+        takes pdb file and reports the break down of pucker states based on collagen Positions. i.e.
+            Total Number of prolines+hyp, %age Exo, %age Endo
+            Total Number of prolines in X Position,  %age Exo and %age Endo, overall contribution %age Exo and %age Endo,   
+            Total Number of prolines in Y Position,  %age Exo and %age Endo, overall contribution %age Exo and %age Endo,
+            Total Number of hypdroxyprolines in X Position, %age Exo and %age Endo, overall contribution %age Exo and %age Endo,
+            Total Number of hypdroxyprolines in Y Position, %age Exo and %age Endo, overall contribution %age Exo and %age Endo,
     
     puckerGroupsRB or pgrb inpfile
         Outputs an rbodyconfig file containing the atoms of each hydroxyproline or proline in separate groups for
         each residue. 
-              
     
     puckerGroupsRBS or pgrbs inpfile resfile
         Outputs an rbodyconfig file containing the atoms of each hydroxyproline or proline in separate groups for
         each residue specified in resFile 
-    
     
     puckerGroups or pg inpfile OHflag [outfile]
         Finds prolines or hydroxprolines in the inpfile and outputs an atomgroups file containing
@@ -216,33 +184,83 @@ command is one of:
         Specifies the ring tip groups for rotating about the CD-CB axis for changing state 
         between endo and exo. If OH flag is not zero also outputs the OH group rotations.
         Scale Fac scales the rotation factor. probRot is the probability of a rotation occurring.
-    
-    checkTorsion or ct or cT or CT inpfile [outfile]
-    
-    torsionDiff or td or tD or Td or TD inpDirectory [outfile]
-     
-    residueInfo or RI or ri inpfile [outfile]
-        takes a PDB and generates the per residue information such as torsionAngles, chi values and pucker status
-    
-    puckerBreakDown PBD or pbd inpfile
-    takes pdb file and reports the break down of pucker states based on collagen Positions. i.e.
-        Total Number of prolines+hyp, %age Exo, %age Endo
-        Total Number of prolines in X Position,  %age Exo and %age Endo, overall contribution %age Exo and %age Endo,   
-        Total Number of prolines in Y Position,  %age Exo and %age Endo, overall contribution %age Exo and %age Endo,
-        Total Number of hypdroxyprolines in X Position, %age Exo and %age Endo, overall contribution %age Exo and %age Endo,
-        Total Number of hypdroxyprolines in Y Position, %age Exo and %age Endo, overall contribution %age Exo and %age Endo,
-    
-    readSymmetry, 'rs', 'RS','rS','Rs' inpfile [capRes] [fig] [outfile]
-        Returns the helical parameters of the collagen structure in the given pdb. Ignores capRes residues at either end of each chain in inpfile.
-        FIgure plots the data from the fitting routine as we go. (slows things down Massively!). outfile specifies the output file name
-            
+        
+    ramachandran or rmc inpfile
+        Makes a ramachandran plot of the pdb file.
+        
+    readChirality or rc inpfile [outfile]
+        Checks the chirality state of each proline and hydroxyproline  
+        in the inpfile. Output is resNum with an 2-X or 4-X where x is R or S.
+        Generally should be an 2-S 4-R state.  if it is proline then just get a 2-R state.
+        If not specified the outfile is a .chi file. See fixChirality command
+
+    readpucker or rp inpfile [outfile]
+        Checks the pucker state of each residue in inpfile.
+        looks for inpfile (automatically appends .pdb if it is not there) and
+        analyses the pucker state of each residue before outputting data into
+        outfile in a format of resId, resName, Endo|Exo. 
+        If outfile is omitted readpucker outputs data in inpfile.pucker.
+        
+        see writepucker command
+
     readResidueSymmetry','rrs','RRS']: inpfile [outfile]
         Fits and axis to all the CA, N and C atoms in all the residues. Then uses the axis to measure the helical parameters arising from each residue
         and the corresponding residue in the next GXY repeat. 
         Returns a list which is GXY units long. 
         Each list sets of three  [residue numbers, twist about the axis, Distance along axis, radius, number of units per period and true period].
         Dumps a gnuplot readable file.
-            
+
+    readSequence or rsq,RSQ  inpDB mode [width] 
+        reads the sequence from the PDB and outputs into file with a .seq on the end.
+        Enables easy editing of the PDB sequence. 
+            Mode = 1 yields a numbered list of residues. 
+            Mode = 2 yields a list of three letter residue codes in a format suitable for modifySequence.
+            Mode = 3 yields a string of single chars representing each residue with the standard letters.
+            Mode = 4 is three letter codes separated by spaces. 
+            Mode = 5 uses an optional width parameter to output 1 letter codes in lines width chars long 
+                     as per fasta file format. Defaults to 80 if omitted.
+                     
+            see modifySequence command. 
+    
+    readSymmetry, 'rs', 'RS','rS','Rs' inpfile [capRes] [fig] [outfile]
+        Returns the helical parameters of the collagen structure in the given pdb. Ignores capRes residues at either end of each chain in inpfile.
+        FIgure plots the data from the fitting routine as we go. (slows things down Massively!). outfile specifies the output file name
+
+    removeAtoms or ra inpfile rulefile [outfile]
+        loads a pdb file and removes lines which match the specifications and then rewrites the pdb file. 
+        looks first for infile or infile.pdb and loads it. 
+        Then looks for the rulefile or rulefile.lines. which has the format:
+
+        string integer
+    
+        where string is the string which is contained in the ATOM line that qualifies it for removal, 
+        eg H, C, GLY or whatever.  integer is the zero based column number in which the text is to appear.
+        envisaged for use solely with the ATOM keyword. 
+        The rest of the PDB file is output verbatim, except for the lines which qualify.
+        if the outfile is not specified then the default is infile_short.pdb.
+
+    removeDup or rd inpfile [outfile]
+        Removes duplicate atoms by assessing the xyz position of each atom and makes sure it
+        isn't output. Looks for inpFile or inpFile.pdb and if outfile is not specified
+        writes to inpFile_noDup.pdb
+    
+    renameTermini or rT inpfile flag [topologyfile]
+        looks for the pdb inpfile or inpfile.pdb and loads it. Then it scans for inpfile.prmtop
+        or topologyFile and then adds or removes Ns and Cs to the N and C termini of each chain
+        in the topologyFile. The topologyFile is overwritten. If Flag is 0 the topology file is
+        output without the Ns and Cs. If Flag is 1 the topology file is output with the Ns and Cs.
+    
+    renumberRes or RN inpfile [startNum] [outfile]
+        starts numbering residues at the beginning of a file and everytime it finds a Nitrogen increments
+        the residue number. outputs using standard rules.  looksfor inpFile or inpFile.pdb and if outfile
+        is not specified writes to inpFile_ren.pdb.
+
+    replacePdbXyz or xyz2pdb inpfile xyzfile [outputfile]
+        takes the input pdb file and generates a new pdb file for every frame in the xyzfile
+       
+    residueInfo or RI or ri inpfile [outfile]
+        takes a PDB and generates the per residue information such as torsionAngles, chi values and pucker status
+
     rotateGroup or RG or rg inpfile atomGroup [outfile]
         rotates all the atomgroups defined in the atomgroups file by angle specified in the atom groups file.
         This is a change to the conventional meaning of the parameter in the atomgroups file. The indicies are 
@@ -251,8 +269,22 @@ command is one of:
         atom1index
         atom2index 
     
-    replacePdbXyz or xyz2pdb inpfile xyzfile [outputfile]
-        takes the input pdb file and generates a new pdb file for every frame in the xyzfile
+    sortRes or sR inpfile sortFile [outfile]
+        Outputs the residues in the infile in the order specified in the sortFile and then 
+        renumbers residues starting at 1. looks for inpFile or inpFile.pdb and if outfile is not specified
+        writes to inpFile_sort.pdb
+    
+    torsionDiff or td or tD or Td or TD inpDirectory [outfile]
+
+    writepucker or wp inpfile puckerStateFile [outfile]
+        sets the pucker state of each residue in the inpfile pdb to the status specified in puckerStateFile.
+        The pucker State file contains lines with the format resiD, resName, Endo|Exo.
+        Looks for inpfile (automatically appends .pdb if it is not there).
+        A pucker inversion operation is applied to prolines or hydroxyprolines which do not match the
+        required state. Outfile is an optional outputfilename. Outfile is omitted the output file name 
+        is inpFileRoot.pucker.pdb.
+        
+        see readpucker command
                         
 """
  
@@ -305,6 +337,13 @@ command is one of:
         if len(sys.argv)!=3:
             print("cPDB: Must specify inpfile:  cPDB inpfile")
             exit(1)
+
+    elif command in ['crankShaftGroups', 'crankshaftgroups', 'csg']:
+        if len(sys.argv)!=8:
+            print("crankShaftGroups: usage inpfile nncutoff ddcutoff probSelect includesidechains(1/0) sidechains(1/0)")
+            exit(1)
+        else:
+            params=sys.argv[3:]
             
     elif command in ['eliminateCIS', 'eCIS']:
         if len(sys.argv)!=3:
@@ -732,7 +771,11 @@ if __name__ == '__main__':
 
         if command in ['readpucker','rp']:
             pl.readpucker(infile,params)
-        
+
+        elif command in ['crankShaftGroups', 'crankshaftgroups', 'csg']:
+            print(params)
+            pl.crankShaftGroups(infile, int(params[0]), float(params[1]), scaleFactor=float(params[2]), includeSideChains=bool(int(params[3])), rotateSideGroups=bool(int(params[4])) )
+
         elif command in ['fragmentPDB', 'fragmentpdb', 'fpdb', 'fPDB', 'FPDB']:
             pl.fragmentPDB(infile, params)
         

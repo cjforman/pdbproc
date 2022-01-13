@@ -10,6 +10,97 @@ from matplotlib.patches import FancyArrowPatch
 import copy as cp
 import glob
 
+# A global dictionary containing the information on which side groups can rotate for the various amino acids.
+# don't include the rotation axis in the list of atoms 
+AARotTemplates = {
+    
+    'ACE': { ('C', 'CH3'): ['HH31', 'HH32', 'HH33'] },
+    
+    'ALA': { ('CA', 'CB'): ['HB1', 'HB2', 'HB3'] },
+    
+    'ARG': { ('CA', 'CB'): ['HB2', 'HB3', 'CG', 'HG2', 'HG3', 'CD', 'HD2', 'HD3', 'NE', 'HE', 'NH1', 'HH11', 'HH12', 'NH2', 'HH21', 'HH22', 'CZ'],
+             ('CB', 'CG'): ['HG2', 'HG3', 'CD', 'HD2', 'HD3', 'NE', 'HE', 'NH1', 'HH11', 'HH12', 'NH2', 'HH21', 'HH22', 'CZ'],
+             ('CG', 'CD'): ['HD2', 'HD3', 'NE', 'HE', 'NH1', 'HH11', 'HH12', 'NH2', 'HH21', 'HH22', 'CZ'],
+             ('CD', 'NE'): ['HE', 'NH1', 'HH11', 'HH12', 'NH2', 'HH21', 'HH22', 'CZ'],
+             ('NE', 'CZ'): ['NH1', 'HH11', 'HH12', 'NH2', 'HH21', 'HH22'],
+             ('CZ', 'NH1'): ['HH11', 'HH12'],
+             ('CZ', 'NH2'): ['HH21', 'HH22']},
+    
+    'ASN': { ('CA', 'CB'): ['HB2', 'HB3', 'CG', 'ND2', 'HD21', 'HD22', 'OD1'],
+             ('CB', 'CG'): ['ND2', 'HD21', 'HD22', 'OD1'],
+             ('CG', 'ND2'): ['HD21', 'HD22']},
+    
+    'ASP': { ('CA','CB'): ['HB2', 'HB3', 'CG', 'OD1', 'OD2'],
+             ('CB','CG'): ['OD1', 'OD2'] },
+    
+    'CYS': { ('CA','CB'): ['HB2', 'HB3', 'SG', 'HG'], 
+             ('CB','SG'): ['HG'] },
+    
+    'GLU': { ('CA','CB'): ['HB2', 'HB3', 'CG', 'HG2', 'HG3', 'CD', 'OE1', 'OE2'],
+             ('CB','CG'): ['HG2', 'HG3', 'CD', 'OE1', 'OE2'],
+             ('CG','CD'): ['OE1', 'OE2'] },
+
+    'GLY': { },
+    
+    'GLN': { ('CA','CB'): ['HB2', 'HB3', 'CG', 'HG2', 'HG3', 'CD', 'OE1', 'NE2', 'HE21', 'HE22'],
+             ('CB','CG'): ['HG2', 'HG3', 'CD', 'OE1', 'NE2', 'HE21', 'HE22'],
+             ('CG','CD'): ['OE1', 'NE2', 'HE21', 'HE22'],
+             ('CD','NE2'): ['HE21', 'HE22']},
+    
+    'HIS': { ('CA','CB'): ['HB2', 'HB3', 'CG', 'CD2', 'HD2', 'ND1', 'HD1', 'CE1', 'HE1', 'NE2'],
+             ('CB','CG'): ['CD2', 'HD2', 'ND1', 'HD1', 'CE1', 'HE1', 'NE2'],
+             ('ND1','NE2'): ['HD1', 'CE1', 'HE1']},
+    
+    'HYP': { ('CB','CD'): ['HB2', 'HB3', 'CG', 'HG2', 'OD1', 'HO1', 'HD2', 'HD2', ],
+             ('CG','OD'): ['HO1']},
+    
+    'ILE': { ('CA','CB'): ['HB', 'CG1', 'HG12', 'HG13', 'CG2', 'HG21', 'HG22', 'HG23', 'CD1', 'HD11', 'HD12', 'HD13'],
+             ('CB','CG1'): ['HG12', 'HG13', 'CD1', 'HD11', 'HD12', 'HD13'],
+             ('CG1','CD1'): [ 'HD11', 'HD12', 'HD13'],
+             ('CB','CG2'): [ 'HG21', 'HG22', 'HG23']},
+    
+    'LEU': { ('CA','CB'): ['HB2', 'HB3', 'CG', 'HG', 'CD1', 'HD11', 'HD12', 'HD13', 'CD2', 'HD21', 'HD22', 'HD23'], 
+             ('CB','CG'): ['HG', 'CD1', 'HD11', 'HD12', 'HD13', 'CD2', 'HD21', 'HD22', 'HD23'],
+             ('CG','CD1'): ['HD11', 'HD12', 'HD13'],
+             ('CG','CD2'): ['HD21', 'HD22', 'HD23']},
+    
+    'LYS': { ('CA','CB'): ['HB2', 'HB3', 'CG', 'HG2', 'HG3', 'CD', 'HD2', 'HD3', 'CE', 'HE2', 'HE3', 'NZ', 'HZ1', 'HZ2', 'HZ3'],
+             ('CB','CG'): ['HG2', 'HG3', 'CD', 'HD2', 'HD3', 'CE', 'HE2', 'HE3', 'NZ', 'HZ1', 'HZ2', 'HZ3'],
+             ('CG','CD'): ['HD2', 'HD3', 'CE', 'HE2', 'HE3', 'NZ', 'HZ1', 'HZ2', 'HZ3'],
+             ('CD','CE'): ['HE2', 'HE3', 'NZ', 'HZ1', 'HZ2', 'HZ3'],
+             ('CE','NZ'): ['HZ1', 'HZ2', 'HZ3']},
+    
+    'MET': { ('CA','CB'): ['HB2', 'HB3', 'CG', 'HG2', 'HG3', 'SD', 'CE', 'HE2', 'HE3'],
+             ('CB','CG'): ['HG2', 'HG3', 'SD', 'CE', 'HE2', 'HE3'],
+             ('CG','SD'): ['CE', 'HE2', 'HE3'],
+             ('SD','CE'): ['HE2', 'HE3'] },
+
+    'NME': { ('N', 'CH3'): ['HH31', 'HH32', 'HH33'] },
+
+    'PHE': {  ('CA','CB'): ['HB2', 'HB3', 'CG', 'CD1', 'HD1', 'CD2', 'HD2', 'CE1', 'HE1', 'CE2', 'HE2', 'CZ', 'HZ1'], 
+              ('CB','CG'): ['CD1', 'HD1', 'CD2', 'HD2', 'CE1', 'HE1', 'CE2', 'HE2', 'CZ', 'HZ1']},
+    
+    'PRO': { ('CB','CD'): ['HB2', 'HB3', 'CG', 'HG2', 'HG3', 'HD2', 'HD2'] },
+    
+    'SER': { ('CA', 'CB'): ['HB2', 'HB3', 'OG', 'HG'],
+             ('CB', 'OG'): ['HG'] },
+
+    'THR': { ('CA', 'CB'): ['HB', 'OG1', 'HG1', 'CG2', 'HG21', 'HG22', 'HG23'], 
+             ('CB', 'OG1'): ['HG1'],
+             ('CB', 'CG2'): ['HG21', 'HG22', 'HG23']},
+    
+    'TRP': { ('CA', 'CB'): ['HB2', 'HB3', 'CG', 'CD1', 'HD1', 'CD2', 'NE1', 'HE1', 'CE2', 'CE3', 'HE3', 'CZ2', 'HZ2', 'CZ3', 'HZ3', 'CH2', 'HH2'],
+             ('CB', 'CG'): ['CD1', 'HD1', 'CD2', 'NE1', 'HE1', 'CE2', 'CE3', 'HE3', 'CZ2', 'HZ2', 'CZ3', 'HZ3', 'CH2', 'HH2'] },
+
+    'TYR': { ('CA', 'CB'): ['HB2', 'HB3', 'CG', 'CD1', 'HD1', 'CD2', 'HD2', 'CE1', 'HE1', 'CE2', 'HE2', 'CZ', 'OH', 'HH'],
+             ('CB', 'CG'): ['CD1', 'HD1', 'CD2', 'HD2', 'CE1', 'HE1', 'CE2', 'HE2', 'CZ', 'OH', 'HH'],
+             ('CZ', 'OH'): ['HH']},
+    
+    'VAL': { ('CA', 'CB'): ['HB', 'CG1', 'HG11', 'HG12', 'HG13', 'CG2', 'HG21', 'HG22', 'HG23'],
+             ('CB', 'CG1'): [ 'HG11', 'HG12', 'HG13'],
+             ('CB', 'CG2'): [ 'HG21', 'HG22', 'HG23']}
+    }
+
 class Arrow3D(FancyArrowPatch):
     def __init__(self, xs, ys, zs, *args, **kwargs):
         FancyArrowPatch.__init__(self, (0,0), (0,0), *args, **kwargs)
@@ -66,7 +157,8 @@ def checkFileForCIS(filename):
 
     return outList
     
-
+# splits the peptide bond into two groups and rotates them random amounts each.
+# leads to transitions between CIS and Trans isomerisations.    
 def makeAtomGroupsFile(atomList, atoms):
     outStrings = []
     for atomGroup in atomList:
@@ -93,7 +185,283 @@ def makeAtomGroupsFile(atomList, atoms):
         
     writeTextFile(outStrings, "atomgroups")
 
+# generates an atom groups file that contains rotation groups defined by the 
+# segment of a chain between CAs that obey the restrictions.
+# Can include the side chains on the limiting CAs or not as desired
+# For good measure also can add all side chain rotations to the atomgroups file if desired 
+def crankShaftGroups(infile, nnCutoff, dCutoff, includeSideChains=False, rotateSideGroups=False, scaleFactor=0.1):
+    # get all the atoms
+    atoms = readAllAtoms(infile)
+    
+    # re-assign the chain letters to each atom so there are distinct chain letters for each chain 
+    assignChains(atoms)
+    
+    # extract all the CAs in the entire protein into a sublist
+    CAList = [atom for atom in atoms if atom[1]=='CA']
+    
+    # set up a dict keyed by each CA to store which other CAs may form end points with each key.  
+    CADict = {}
+    
+    # for each CA identify the list of CAs that will form end points of crankChains with this CA.
+    for CAListIndex, CA in enumerate(CAList):
+        # CAtest qualifies as being an end point with CA if the following apply:
+        # CA and CATtest are in the same chain
+        # CATest's residue number is within nnCutoff residues of the key CA
+        # If CAtest is within dCutoff euclidean distance
+        # CA and CATest are not the same atom 
+        # the CA's are noted by their index number in the CAList for efficient look up
+        CADict[CAListIndex] = [ CAListIndexTest for CAListIndexTest, CAtest in enumerate(CAList) if testCAPair(CA, CAtest, nnCutoff, dCutoff)==True ]
 
+    # from the dictionary generate a set of pairs of CAListIndices ordered lowest first. 
+    CAPairs = []
+    for CAListIndex1 in CADict:
+        for CAListIndex2 in CADict[CAListIndex1]:
+            if CAListIndex1 < CAListIndex2:
+                CAPairs.append( (CAListIndex1, CAListIndex2) )
+            else:
+                CAPairs.append( (CAListIndex2, CAListIndex1) ) 
+     
+    # use the set functionality to eliminate duplicates
+    CAPairs = set(CAPairs)
+
+    if len(CAPairs)==0:
+        print("No CA Pairs were selected.")
+        probSelect = 0.0
+    else:
+        # set ProbSelect to be 1/number of crank chains
+        probSelect = 1.0/float(len(CAPairs))
+   
+    # a list of dictionaries that define the rotation groups 
+    atomGroupsDictList = [] 
+    
+    # for each pair generate a list of atoms that will go in the crank chain.
+    # add that list of atoms as a sublist to atomGroupsList
+    # de-index the CAList so the inputs to the sub routine are the actual CA atoms properties list
+    for CAPair in CAPairs:
+        # generate the rotation group dictionary and add it
+        atomGroupsDictList.append(createRotationGroupDict(atoms, CAList[CAPair[0]], CAList[CAPair[1]], probSelect, includeSideChains=includeSideChains, rotScaleFactor=scaleFactor))
+
+    # if the rotate side group flag is set, then add all rotatable groups in sidechains in the protein to the list.
+    if rotateSideGroups:
+        print("Adding Side Chain Rotations")
+        atomGroupsDictList += makeSideChainsRotationGroupDictList(atoms)
+    else:
+        print("No Side Chain Rotations were added")
+
+    # write the atomgroups file
+    print("Writing Atomgroups file")
+    writeAtomGroups("atomgroups", atomGroupsDictList)
+    # write out the atom groups as separate PDBS for debugging. 
+    for rotGroupDict in atomGroupsDictList:
+        writeAtomsToTextFile(rotGroupDict['atoms'], 'groupPDBS/'+rotGroupDict['name'] + '.pdb')
+
+
+    print("Done")
+    
+# function to determine if a CA pair should be retained or not
+def testCAPair(CA1, CA2, nnCutoff, dCutoff):
+    goodPair = False
+    if CA1[4]==CA2[4]:
+        if ( np.abs(CA1[5] - CA2[5]) < nnCutoff ):
+            if ( dist(CA1, CA2)<dCutoff):
+                if ( CA1[0] != CA2[0] ):
+                    goodPair=True
+    return goodPair
+
+
+# takes a list of dictionaries each of which defines a rotation group and outputs them all to filename
+# in the atomgroups file format. 
+def writeAtomGroups(filename, atomGroupDictList):
+    
+    # create output string
+    outStrings = []
+    
+    try:
+        # for each group extract the information from the dictionary and create the group definition line
+        for rotGroupDict in atomGroupDictList:
+
+            # only dump the group to file if there are atoms in the set            
+            if len(rotGroupDict['atoms'])>0:
+                outStrings.append( "GROUP " + rotGroupDict['name'] + " " + 
+                                   str(rotGroupDict['start'][0]) + " " + 
+                                   str(rotGroupDict['end'][0]) + " " +
+                                   str(rotGroupDict['numAtoms']) + " " +
+                                   str(rotGroupDict['rotScaleFactor']) + " " +
+                                   str(rotGroupDict['probSelect']) + "\n" )
+        
+                # output the index number of each atom in the group on its own line (might have to add one to this (and axis atoms)        
+                for atom in rotGroupDict['atoms']:
+                    outStrings.append( str(atom[0]) + "\n" ) 
+        
+                # add a few line feeds to space the groups out        
+                outStrings.append( "\n\n" )
+    except KeyError as e:
+        print("Error: group rotation information missing", e)
+        sys.exit()
+    
+    writeTextFile(outStrings, filename)
+
+#     0          1          2           3          4          5         6           7         8          9
+# atom_seri, atom_name, alte_loca, resi_name, chai_iden, resi_numb, code_inse, atom_xcoo, atom_ycoo, atom_zcoo, atom_occu, atom_bfac,seg_id,atom_symb,charge
+    
+
+# loops through the residues defined in the atoms list and 
+# generates a list of dictionaries each defining possible side chain rotations for each kind of residue 
+def makeSideChainsRotationGroupDictList(atoms):
+    # creates a dictionary of lists of atoms in each residue keyed by the residue numbers
+    residues = breakAtomsIntoResidueDicts(atoms)
+    
+    # computes probability of selecting each residue as 1/number of residues (len of residues dictionary)
+    probSelect = 1.0 / float(len(residues))
+
+    # create an empty list for output 
+    outList = []
+    
+    # loop through each residue in the residues dictionary
+    for residue in residues:
+        
+        # takes the list of atoms define in each residue dictionary entry and returns a list of rotation group dictionaries,
+        # there is one such rotation group dictionary for each rotatable sub group of the side chain.
+        # sets the probability of selection of each group to be 1/number of residues
+        outList += createSideChainRotationGroupDictList(residues[residue], probSelect=probSelect)
+
+    return outList
+
+# returns a dictionary containing lists of atoms in each residue keyed by the residue number
+# the dictionary is ordered by the key
+def breakAtomsIntoResidueDicts(atoms):
+    outDict = {}
+    for atom in atoms:
+        try:
+            outDict[atom[5]].append(atom)
+        except KeyError:
+            outDict[atom[5]] = [ atom ]
+    
+    # return the dictionary in residue order
+    return {key:outDict[key] for key in sorted(outDict)}
+
+# returns a list of dictionaries of all the rotatable side groups in a residue.
+# dictionaries in the output list are of the form: {'numAtoms':0, 'atoms':[],'start':atom1, 'end':atom2}
+# input is a list of atoms in the residue    
+def createSideChainRotationGroupDictList(resAtomList, probSelect=0.1):
+
+    # set up output list
+    outDictList = []
+    
+    # identify the unique residue names in the residue atom list  
+    resSet = set([ atom[3] for atom in resAtomList ])
+    
+    
+    # res set should only have a single element which is the residue type of the residue
+    if len(resSet)==1:
+        resName = next(iter(resSet))
+        resNum = resAtomList[0][5]
+        
+        # loop through the rotPair, atomsRotGroup pairing from the appropriate residue template from the template dictionary 
+        for rotPair, atomRotGroup in AARotTemplates[resName].items():
+            # rotPair defines the axis atom names 
+            # AtomRotGroup defines the set of atoms to move
+            # generate a dictionary containing all the necessary information concerning which atoms are in the rotation 
+            # group in same format as other functions and add to the list. 
+            outDictList.append({ 'numAtoms': len(atomRotGroup), 
+                                 'atoms': [ atom for atom in resAtomList if atom[1] in atomRotGroup ],
+                                 'start': [ atom for atom in resAtomList if atom[1]==rotPair[0] ],
+                                 'end': [ atom for atom in resAtomList if atom[1]==rotPair[1] ],
+                                 'name': resName + "_" + str(resNum) + "_" + rotPair[0] + "_" + rotPair[1],
+                                 'rotScaleFactor': 1.0,
+                                 'probSelect':  probSelect } )
+    else:
+        print("Error: residue atom list contains atoms from another residue.")
+    
+    return outDictList
+
+# creates a dictionary for a crank chain     
+def createRotationGroupDict(atoms, atom1, atom2, probSelect, includeSideChains=True, rotScaleFactor=0.1):
+    # set up a dictionary for the chain between atom1 and atom2.
+    outDict = {'numAtoms':0, 
+               'atoms':[],
+               'start':atom1, 
+               'end':atom2, 
+               'name': atom1[3] + "_" + str(atom1[5]) + "_" + atom2[3] + "_" + str(atom2[5]), 
+               'rotScaleFactor': rotScaleFactor,
+               'probSelect': probSelect }
+    
+    # assert the atoms are in the same chain and are CA atoms. If not returns an empty chain, 
+    # which won't be added to the atom groups file 
+    if atom1[4]==atom2[4] and atom1[1]=='CA' and atom2[1]=='CA':
+        # create a list of atoms that meet the requirements for being in the current rotation group 
+        outDict['atoms'] = [ atom for atom in atoms if atomInRotationGroup(atom, atom1, atom2, includeSideChains=includeSideChains) ]
+        # count the number of atoms in the rotation group.
+        outDict['numAtoms'] = len(outDict['atoms'])
+    
+    return outDict
+
+# returns true if the test atom meets the requirements for being in a rotation group defined by atom1 and atom2
+# assumes atom1 and atom2 are CA atoms. Atom1 and Atom2 are always added to the group. 
+def atomInRotationGroup(atom, atom1, atom2, includeSideChains=True):
+    # assume the atom is not in the group
+    atomInGroup = False
+    
+    # if the atom is in an intervening residue the atom is in the group.
+    if atom[5]> atom1[5] and atom[5]< atom2[5]:
+        atomInGroup = True
+
+    # if the atom is in the first residue        
+    elif atom[5]==atom1[5]:
+        # if the atom is one of C or O, add it to the group. 
+        if atom[1] in ['C', 'O']:
+            atomInGroup = True
+
+        # if the side chains are being included, then only include the atom is it is not N or H. 
+        if includeSideChains and not atom[1] in ['CA', 'N', 'H']:
+            atomInGroup = True
+
+    # if the atom is in the last residue        
+    elif atom[5]==atom2[5]:
+        # if the atom is one of N or H, add it to the group. 
+        if atom[1] in ['N', 'H']:
+            atomInGroup = True
+
+        # if the side chains are being included, then only include the atom is it is not C or O. 
+        if includeSideChains and not atom[1] in ['CA', 'C', 'O']:
+            atomInGroup = True
+
+    return atomInGroup
+
+def dist(atom1, atom2):
+    d = np.linalg.norm( np.array( [ atom1[7], atom1[8], atom1[9]] ) - np.array( [atom2[7], atom2[8], atom2[9]] ) )
+    return d 
+    
+def assignChains(atoms):
+    # reassigns the chain letters in the atom list with two
+    # conditions for finding the end of the chain:
+    # 1) the presence of an NME indicates to increment the chain
+    # 2) the existing current chain letter is different that the last chain letter. 
+    
+    # initialize variables:
+    chainLets=['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z']
+    chainIndex = 0
+    firstResidue = atoms[0][5] # residue number
+    lastChainLetter = atoms[0][4] # chain identity
+    prevResidue = atoms[0][3]
+    
+    # loop the atoms
+    for atom in atoms:
+
+        # if we hit an ACE when prev residue was an NME then increment the chain index, unless it's the first ACE. 
+        if atom[3]=='ACE' and prevResidue=='NME' and atom[5]>firstResidue:
+            chainIndex += 1
+        
+        # if the current chain letter is different than the last chain Letter than increment chain Index
+        elif atom[4]!=lastChainLetter:
+            chainIndex += 1
+            lastChainLetter = atom[4]
+
+        # write out the chain letter for this atom. Might relabel the chain letters from the order they are in.             
+        atom[4] = chainLets[chainIndex]
+
+        prevResidue = atom[3]
+    
 def findBestCoords(globMask):
     # get a glob of all pdb files
     pdbFiles = glob.glob(globMask)
