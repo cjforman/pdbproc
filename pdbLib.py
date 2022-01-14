@@ -365,8 +365,8 @@ def createSideChainRotationGroupDictList(resAtomList, probSelect=0.1):
             # group in same format as other functions and add to the list. 
             outDictList.append({ 'numAtoms': len(atomRotGroup), 
                                  'atoms': [ atom for atom in resAtomList if atom[1] in atomRotGroup ],
-                                 'start': [ atom for atom in resAtomList if atom[1]==rotPair[0] ],
-                                 'end': [ atom for atom in resAtomList if atom[1]==rotPair[1] ],
+                                 'start': [ atom for atom in resAtomList if atom[1]==rotPair[0] ][0],
+                                 'end': [ atom for atom in resAtomList if atom[1]==rotPair[1] ][0],
                                  'name': resName + "_" + str(resNum) + "_" + rotPair[0] + "_" + rotPair[1],
                                  'rotScaleFactor': 1.0,
                                  'probSelect':  probSelect } )
