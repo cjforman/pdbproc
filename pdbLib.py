@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 import sys, os
 import numpy as np
-import string as strg
 import matplotlib.pyplot as plt  
 from scipy.optimize import fmin_l_bfgs_b
 from itertools import chain
@@ -2248,8 +2247,8 @@ def addTermini(infile, params):
     # generate a list of atoms
     atoms = extractAtomsFromPDB(pdb)
     
-    # generate a list of residues - interested in the first and last residues and their names
-    residues = [ [atom[5], atom[3]] for atom in atoms ]
+    # generate a list of residues - interested in the first and last residues and their names, and chain
+    residues = [ [atom[5], atom[3], atom[4]] for atom in atoms ]
     
     if addN: 
         if residues[0][1]=='ACE':
@@ -2276,7 +2275,7 @@ def addTermini(infile, params):
             NTerm[1] = ' C'
             NTerm[2] = ' '
             NTerm[3] = 'ACE'
-            NTerm[4] = ' '
+            NTerm[4] = residues[0][2]
             NTerm[5] = residues[0][0] - 1
             NTerm[6] = ' '
             NTerm[7] = ACEPos[0]
@@ -2325,7 +2324,7 @@ def addTermini(infile, params):
             CTerm[1] = ' N'
             CTerm[2] = ' '
             CTerm[3] = 'NME'
-            CTerm[4] = ' '
+            CTerm[4] = residues[-1][2]
             CTerm[5] = residues[-1][0] + 1
             CTerm[6] = ' '
             CTerm[7] = NMEPos[0]
@@ -2407,7 +2406,7 @@ def fragmentPDB(infile, params):
         writeTextFile(outList, filename)
     
     return
-        
+    
         
 def reThread(infile, newSequence):
     pdb = readTextFile(infile)

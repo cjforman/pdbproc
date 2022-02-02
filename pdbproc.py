@@ -65,6 +65,21 @@ command is one of:
 
     createCTFile, cCTF inpfile thresh
         generates a CIS_TRANS_STATE file for a given PDB
+
+    createSequence, CSQ inpfile type term
+        Uses the vesiform functionality to create a sequence. 
+         
+        inpfile is a type 3 sequence file. Generates a backbone N C CA according to the type.
+        
+            type is alpha, beta, or straight. 
+            
+            This defines the dihedral angles phi and psi of the backbone. Omega is always 180.
+        
+            Once the back bone is generated, a partial PDB is output that has the N CA, and C coords and the sequence
+            names of the residues.   This can be fed into tleap to populate the rest of structure and generate amber params.
+            
+            If term is 1 then ACE and NME are added also. 
+                
         
     eliminateCIS eCIS inpfile
 	    Calls the createCT algorithm to check if the lowest energy pdb has no CIS states
@@ -337,6 +352,14 @@ command is one of:
         if len(sys.argv)!=3:
             print("cPDB: Must specify inpfile:  cPDB inpfile")
             exit(1)
+
+    elif command in ['createSequence', 'CSQ', 'csq']:
+        if len(sys.argv)!=5:
+            print("csq: usage: inpfile type term(0/1)")
+            exit(1)
+        else:
+            params=sys.argv[3:]
+
 
     elif command in ['crankShaftGroups', 'crankshaftgroups', 'csg']:
         if len(sys.argv)!=8:
@@ -778,6 +801,9 @@ if __name__ == '__main__':
 
         elif command in ['fragmentPDB', 'fragmentpdb', 'fpdb', 'fPDB', 'FPDB']:
             pl.fragmentPDB(infile, params)
+        
+        elif command in ['createSequence', 'CSQ', 'csq']:
+            pl.createSequence(infile, type=params[2], term=params[1])
         
         elif command in [ 'centrePDB', 'CPDB', 'cPDB', 'cpdb']:
             pl.centrePDB(infile)
