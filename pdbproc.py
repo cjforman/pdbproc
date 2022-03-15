@@ -23,6 +23,17 @@ command is one of:
         otherwise default is 0, 109.
         Bond length is difference between C and CA or CA and N in adjacent residue. 
 
+    backboneAtomGroups inpfile angRange
+        
+        aliases: BBAG, bbag
+                
+        Creates an atom groups file with groups from each CA to the end of the chain and 
+        also from each N to the end of the chain. This enables exploration of each phi and psi
+        angle "independently".  Intended to be a way to quickly collapse a straight chain into far apart 
+        structures.  After a certain point can be followed up with side chain moves as the 
+        chain collapses. AngRange determines the size range of the rotations. (-180 to 180 degrees. 
+        Converted to radians internally.)  
+
     centrePDB CPDB or cPDB inpfile
         translates the PDB to it's centre of mass frame and outputs identical pdb with only coords modified.
 
@@ -346,6 +357,14 @@ command is one of:
             print("fpdb params: ", params)
         else:
             print("fragmentPDB: Must specify inpfile and resflle:  fpdb inpfile resfile")
+            exit(1)
+
+
+    elif command in ['backboneAtomGroups', 'BBAG', 'bbag']:
+        if len(sys.argv)==4:
+            params = sys.argv[3]
+        else:
+            print("backboneAtomGroups: Specify inpfile and resflle:  BBAG inpfile angRange")
             exit(1)
             
     elif command in [ 'centrePDB', 'CPDB', 'cPDB', 'cpdb']:
@@ -794,6 +813,10 @@ if __name__ == '__main__':
 
         if command in ['readpucker','rp']:
             pl.readpucker(infile,params)
+
+        elif command in ['backboneAtomGroups', 'BBAG', 'bbag']:
+            print(params)
+            pl.backboneAtomGroups(infile, float(params[0]) )
 
         elif command in ['crankShaftGroups', 'crankshaftgroups', 'csg']:
             print(params)

@@ -184,6 +184,51 @@ def makeAtomGroupsFile(atomList, atoms):
         
     writeTextFile(outStrings, "atomgroups")
 
+def backboneAtomGroups(infile, angRange):
+
+    # get all the atoms
+    atoms = readAllAtoms(infile)
+    
+    # re-assign the chain letters to each atom so there are distinct chain letters for each chain 
+    assignChains(atoms)
+    
+    # generate list of atoms in each chain
+    chains = breakAtomsInToChains(atoms)
+    
+    # for each chain break the list into residue sets
+    ChainResidues = [ breakAtomsIntoResidueDicts(chain) for chain in chains ]
+    
+    # count the overall number of residues to give each group 1/2N chance of being picked. (2 groups come out of each residue)
+    numResidues = sum([len(chain) for chain in ChainResidues])
+    probSelect = 1.0/(2.0 * float(numResidues))
+    
+    # create a list of dictionaries that defines each rotation group 
+    atomGroupsDictList = [] 
+    
+    # loop through each chain 
+    for chain, residues in zip(chains, ChainResidues):
+        
+        # loop through each residue in the chain and extract the list of atoms from the dictionary 
+        for _, residue in residues.items():
+            
+            # for each residue create a dictionary with a list of all atoms from CA in that residue to the end of each chain
+            atomGroupsDictList.append( createEndOfChainRotationGroupDict(chain, residue, 'CA', probSelect, rotScaleFactor=angRange) )
+            
+            # for each residue create a dictionary with a list of all atoms from N in that residue to the end of each chain
+            atomGroupsDictList.append( createEndOfChainRotationGroupDict(chain, residue, 'N', probSelect, rotScaleFactor=angRange) )
+
+    # write the atomgroups file
+    print("Writing Atomgroups file")
+    writeAtomGroups("atomgroups", atomGroupsDictList)
+    # write out the atom groups as separate PDBS for debugging. 
+    # for rotGroupDict in atomGroupsDictList:
+    #     writeAtomsToTextFile(rotGroupDict['atoms'], 'groupPDBS/'+rotGroupDict['name'] + '.pdb')
+
+    print("Done")
+
+
+
+
 # generates an atom groups file that contains rotation groups defined by the 
 # segment of a chain between CAs that obey the restrictions.
 # Can include the side chains on the limiting CAs or not as desired
@@ -374,6 +419,36 @@ def createSideChainRotationGroupDictList(resAtomList, probSelect=0.1):
     
     return outDictList
 
+# creates a dictionary storing all the atoms from the given atom in the given residue until the end of the chain.
+# leaves out the side chain from the current residue. 
+def createEndOfChainRotationGroupDict(atoms, residueAtomList, atomName, probSelect, rotScaleFactor=0.1):
+    
+    startAtom = None
+    outDict = {'numAtoms':0, 'atoms':[]} #returns an empty dictionary of a start atom cannot be found. 
+     
+    for atom in residueAtomList:
+        if atom[1]==atomName:
+            startAtom = atom
+    
+    if startAtom:
+        # set up a dictionary for the chain from named atom in residue to the last atom in the chain.
+        outDict = {'numAtoms':0, 
+                   'atoms':[],
+                   'start':startAtom, 
+                   'end':atoms[-1], 
+                   'name': startAtom[1] + "_" + str(startAtom[5]), 
+                   'rotScaleFactor': rotScaleFactor,
+                   'probSelect': probSelect }
+        
+        # assert the start and end atoms are in the same chain and start atom is either an 'N' or a 'CA'
+        if startAtom[4]==atoms[-1][4] and startAtom[1] in ['CA', 'N']:
+            # create a list of atoms that meet the requirements for being in the current rotation group 
+            outDict['atoms'] = [ atom for atom in atoms if atomInRotationGroupType2(atom, startAtom) ]
+            # count the number of atoms in the rotation group.
+            outDict['numAtoms'] = len(outDict['atoms'])
+    
+    return outDict
+
 # creates a dictionary for a crank chain     
 def createRotationGroupDict(atoms, atom1, atom2, probSelect, includeSideChains=True, rotScaleFactor=0.1):
     # set up a dictionary for the chain between atom1 and atom2.
@@ -395,6 +470,36 @@ def createRotationGroupDict(atoms, atom1, atom2, probSelect, includeSideChains=T
     
     return outDict
 
+# returns true if the test atom is
+# 1) in a residue after the residue containing the startAtom
+# 2) in the same residue at the start atom and:
+#    1) If the startAtom is a CA, and the test atom is a 'C' or 'O' atom
+#    2) If the startAtom is a N, add all the atoms except N and H in the residue
+def atomInRotationGroupType2(atom, startAtom):
+    # assume the atom is not in the group
+    atomInGroup = False
+    
+    # if the atom is in a residue after the test residue then include it.  
+    if atom[5]> startAtom[5]:
+        atomInGroup = True
+
+    # if the test atom is in the startAtom residue        
+    elif atom[5]==startAtom[5]:
+        # if the startAtom is a 'CA'
+        if startAtom[1]=='CA':
+            # if the test atom is one of C or O, add it to the group. 
+            if atom[1] in ['C', 'O']:
+                atomInGroup = True
+        # if the startAtom is an 'N'
+        if startAtom[1]=='N':
+            # if the test atom is no N or H add it to the group. 
+            if not atom[1] in ['N', 'H']: 
+                atomInGroup = True
+    
+    return atomInGroup
+
+
+
 # returns true if the test atom meets the requirements for being in a rotation group defined by atom1 and atom2
 # assumes atom1 and atom2 are CA atoms. Atom1 and Atom2 are always added to the group. 
 def atomInRotationGroup(atom, atom1, atom2, includeSideChains=True):
@@ -411,7 +516,7 @@ def atomInRotationGroup(atom, atom1, atom2, includeSideChains=True):
         if atom[1] in ['C', 'O']:
             atomInGroup = True
 
-        # if the side chains are being included, then only include the atom is it is not N or H. 
+        # if the side chains are being included, then only include the atom if it is not N or H. 
         if includeSideChains and not atom[1] in ['CA', 'N', 'H']:
             atomInGroup = True
 

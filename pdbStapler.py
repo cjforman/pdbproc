@@ -392,7 +392,7 @@ def findrotation_kearsley(x1, x2, align_com=True):
         if abs(eigmin) < 1e-6:
             eigmin = 0.
         else:
-            print 'minDist> WARNING minimum eigenvalue is ',eigmin,' change to absolute value'
+            print('minDist> WARNING minimum eigenvalue is ', eigmin, ' change to absolute value')
             eigmin = -eigmin
  
     dist = np.sqrt(eigmin) # this is the minimized distance between the two structures
@@ -435,7 +435,7 @@ class StandardClusterAlignment(object):
     --------
  
     >> for rot, invert in StandardClusterAlignment(X1, X2):
-    >>     print "possible rotation:",rot,"inversion:",invert
+    >>     print( "possible rotation:",rot,"inversion:",invert
  
     """
     def __init__(self, coords1, coords2, accuracy = 0.01, can_invert=True):
@@ -773,7 +773,7 @@ class MinPermDistCluster(object):
         if np.abs(dist - self.distbest) > 1e-6:
             raise RuntimeError        
         if self.verbose:
-            print "finaldist", dist, "distmin", self.distbest
+            print( "finaldist", dist, "distmin", self.distbest )
  
         return dist, self.x2_best
  
@@ -962,10 +962,10 @@ class chain:
         self.chainLength = endResidue - startResidue + 1
 
     def Display(self):
-        print self.chainName
-        print self.startResidue
-        print self.endResidue
-        print self.chainLength
+        print( self.chainName )
+        print( self.startResidue )
+        print( self.endResidue )
+        print( self.chainLength )
         return
 
     # assumes residue numbers in a chain are monotonic and contiguous
@@ -994,23 +994,23 @@ class Fragment:
  
     # debugging routine to check the contents of a fragment class
     def Display(self):
-        print "Chain Names:"
-        print self.chainNames
-        print "Chain Info:"       
+        print( "Chain Names:" )
+        print( self.chainNames )
+        print( "Chain Info:" )       
         for chain in self.chains:
             chain.Display()
-        print "Filename:"
-        print self.name
-        print "Number of atoms"
-        print len(self.atoms)
-        print "Residues Attaching to Previous Fragment"
-        print self.preResList
-        print "Residues Attaching to Next Fragment"
-        print self.postResList
-        print "NCap chains"
-        print self.NCapList
-        print "CCap chains"
-        print self.CCapList
+        print( "Filename:" )
+        print( self.name )
+        print( "Number of atoms" )
+        print( len(self.atoms) )
+        print( "Residues Attaching to Previous Fragment" )
+        print( self.preResList )
+        print( "Residues Attaching to Next Fragment" )
+        print( self.postResList )
+        print( "NCap chains" )
+        print( self.NCapList )
+        print( "CCap chains" )
+        print( self.CCapList )
         return
    
     # computes centre of gravity of entire fragment
@@ -1077,7 +1077,7 @@ class Fragment:
     def updateXYZ(self, newXYZ):
         # check input and object data consistency
         if 3 * len(self.atoms) != len(newXYZ):
-            print 'Unable to update atomic XYZ; inconsistent number of atoms'
+            print( 'Unable to update atomic XYZ; inconsistent number of atoms' )
             sys.exit(0)
         j = 0
         for atom in self.atoms:
@@ -1143,7 +1143,7 @@ def getInput():
     try:
         fH = open(filename, 'r')
     except:
-        raise Exception, "Unable to open input file: " + filename
+        raise Exception( "Unable to open input file: " + filename )
         sys.exit(0)
 
     # read in the text defined in pdbLib.py
@@ -1154,13 +1154,13 @@ def getInput():
 
     proceed, errorMsg = validateInputConsistency(fragments, staples)
     
-    print fragments
-    print staples
+    print( fragments )
+    print( staples )
     
 
     if proceed == 1:
-        print 'Unable to continue; input inconsistent:'
-        print errorMsg
+        print( 'Unable to continue; input inconsistent:' )
+        print( errorMsg )
         sys.exit(0)
 
     fH.close()
@@ -1292,11 +1292,11 @@ def align(static, mobile):
 
     # check staticXYZ and mobileXYZ are the same length
     if len(staticXYZ) != len(mobileXYZ):
-        print 'Mismatch in number of residues to align between:'
-        print len(mobileXYZ)
-        print mobile.name
-        print len(staticXYZ)
-        print static.name
+        print( 'Mismatch in number of residues to align between:' )
+        print( len(mobileXYZ) )
+        print( mobile.name )
+        print( len(staticXYZ) )
+        print( static.name )
         sys.exit(0)
 
     # none of the atoms are permutable
@@ -1335,7 +1335,7 @@ def writePDB(fragments, filename):
     try:
         fileHandle = open(filename, 'w')
     except:
-        raise Exception, "Unable to open output file: " + filename
+        raise Exception("Unable to open output file: " + filename)
 
     chainNames = [fragment.getChainNames() for fragment in fragments]
 
@@ -1371,16 +1371,16 @@ def writeAtomGroups(fragments, outfile, atomFile):
     try:
         fileHandle = open(outfile, 'w')
     except:
-        raise Exception, "Unable to open output file: " + outfile
+        raise Exception( "Unable to open output file: " + outfile )
 
     # open data file
     try:
         fileHandle2 = open(atomFile, 'r')
     except:
-        print '\n\n\n'
-        print "Unable to open file: " + outfile + "\nSuggest you run tleap on stapled file first and then run this program again."
+        print( '\n\n\n' )
+        print( "Unable to open file: " + outfile + "\nSuggest you run tleap on stapled file first and then run this program again." )
 
-        raise Exception, "Program Terminated"
+        raise Exception( "Program Terminated" )
 
     atoms = pdb.readAtoms(atomFile)
 
@@ -1400,14 +1400,14 @@ def writeAtomGroups(fragments, outfile, atomFile):
     fragNumber = 1
     lastResidueInFragment = 0  # simulates the -1th fragment...
 
-    print 'Exporting AtomGroups:'
+    print( 'Exporting AtomGroups:' )
 
     # Treat each chain independently so atoms groups are only formed by atoms in a single chain.
     # This algorithm assumes the chains are dumped contiguously in the PDB file (which they
     # are in the writePDB function of this program).
     for chain in chainNamesAll:
 
-        print 'Chain: ' + chain
+        print( 'Chain: ' + chain )
 
         # record the first residue in the entire chain (previous fragment + 1)
         firstResidueInChain = lastResidueInFragment + 1
@@ -1420,7 +1420,7 @@ def writeAtomGroups(fragments, outfile, atomFile):
             # update residueNum to point to last Residue in fragment
             lastResidueInFragment = firstResidueInFragment + fragment.getChainLength(chain) - 1
 
-            print 'Fragment: ' + str(fragNumber) + ', ' + str(firstResidueInFragment) + ', ' + str(lastResidueInFragment) + ', ' + str(fragment.getChainLength(chain))
+            print( 'Fragment: ' + str(fragNumber) + ', ' + str(firstResidueInFragment) + ', ' + str(lastResidueInFragment) + ', ' + str(fragment.getChainLength(chain)) )
 
             # Extract the atom numbers of all atoms in the residues 1st to N-1 residues in chain.
             # Determines bulk of the atoms in the group
@@ -1443,9 +1443,9 @@ def writeAtomGroups(fragments, outfile, atomFile):
             GroupAtoms.append(CAInLastResidue)
             axisAtom1 = NInLastResidue
             axisAtom2 = CAInLastResidue
-#            print 'Group One'
-#            print axisAtom1, axisAtom2
-#            print GroupAtoms
+#            print( 'Group One' )
+#            print( axisAtom1, axisAtom2 )
+#            print( GroupAtoms )
             writeAtomGroup(axisAtom1, axisAtom2, GroupAtoms, fragNumber, 1, fileHandle)
 
             #  2nd group:   1st atom in chain to N of first residue in next Frag
@@ -1464,9 +1464,9 @@ def writeAtomGroups(fragments, outfile, atomFile):
             axisAtom2 = CInLastResidue
             writeAtomGroup(axisAtom1, axisAtom2, GroupAtoms, fragNumber, 2, fileHandle)
 
-#           print 'Group Two'
-#           print axisAtom1, axisAtom2
-#           print GroupAtoms
+#           print( 'Group Two' )
+#           print( axisAtom1, axisAtom2 )
+#           print( GroupAtoms )
 
             # 3rd group:   1st atom in chain to CA of first residue in next Frag
             #              rotation axis: CA and N of next Frag.
@@ -1479,9 +1479,9 @@ def writeAtomGroups(fragments, outfile, atomFile):
             axisAtom2 = CAInNextResidue
             writeAtomGroup(axisAtom1, axisAtom2, GroupAtoms, fragNumber, 3, fileHandle)
 
-#          print 'Group Three'
-#          print axisAtom1, axisAtom2
-#          print GroupAtoms
+#          print( 'Group Three' )
+#          print( axisAtom1, axisAtom2 )
+#          print( GroupAtoms )
           
 
             # 4th group:   1st atom in chain to C of first residue in next Frag
@@ -1501,9 +1501,9 @@ def writeAtomGroups(fragments, outfile, atomFile):
             axisAtom2 = CInNextResidue
             writeAtomGroup(axisAtom1, axisAtom2, GroupAtoms, fragNumber, 4, fileHandle)
 
-#            print 'Group Four'
-#            print axisAtom1, axisAtom2
-#            print GroupAtoms
+#            print( 'Group Four' )
+#            print( axisAtom1, axisAtom2 )
+#            print( GroupAtoms )
 
             # increment the fragment number
             fragNumber += 1
@@ -1641,7 +1641,7 @@ def doRotations(rotations, atoms):
 
     # loop through all the specified rotations
     for CIndex, CAIndex, OIndex, angle, resNum  in zip(CIndices, CAIndices, OIndices, angles, residueNums):
-        print "Processing List from resnum: ", resNum, angle, OIndex, CIndex, CAIndex
+        print( "Processing List from resnum: ", resNum, angle, OIndex, CIndex, CAIndex )
         
         # Compute the NVec, from the latest array of positions
         nVec = atomXYZ[CIndex] -atomXYZ[CAIndex]
@@ -1650,7 +1650,7 @@ def doRotations(rotations, atoms):
         # update the coords that need replacing
         atomXYZ[OIndex:] = [ rotPAboutAxisAtPoint( p, atomXYZ[CIndex], nVec, angle) for p in atomXYZ[OIndex:] ]
 
-    print("updating atom array")
+    print( "updating atom array" )
     for i, pos in enumerate(atomXYZ):
         atoms[i][7]= pos[0]
         atoms[i][8]= pos[1]
@@ -1689,6 +1689,7 @@ if __name__ == '__main__':
 
     The routine then recurses through the list. First fragment is kept fixed. the "prev" residues of the staple are aligned
     with the set of next residues of the stationary fragment. These sets of atoms must be the same size. 
+    Same size means same num of residues, only N CA and C are aligned. 
     
     Then the staple in its new position is kept fixed, and the next fragment
     is aligned with the staple. The prev residues of the fragment are aligned with the next residues of the staple. 
@@ -1700,11 +1701,11 @@ if __name__ == '__main__':
 
     It is up to the user to ensure the adjacent fragments/staples are consistent with each other.
 
-    All the stuff with chains is about making this disparate chains in distinct fragments line up, but then be  
+    All the stuff with chains is about making disparate chains in distinct fragments line up, but then be  
     labelled in the output as continuous chains with the same letter. This was modification for collagen.
     
     Eg a block with three chains, can be aligned with another block containing three chains, and the output will
-    consist of three chains.  
+    consist of three chains, each labelled separately.  
 
     A ROTATION command species a residue in the fully stapled structure which identifies an axis between 
     a specific C and CA bond and rotates all atoms from the C onwards to the end of the fully stapled chain
@@ -1739,23 +1740,23 @@ if __name__ == '__main__':
 
     # load the instruction file which contains two lists 
     # a list of fragments and a list of staples In ORDER. 
-    print "loading data"
+    print( "loading data" )
     [outFile, fragments, staples, rotations, afterEffects] = getInput()
 
 
-    print "Stapling the following fragments:"
+    print( "Stapling the following fragments:" )
     for fragment in fragments:
-        print fragment.name
+        print( fragment.name )
 
-    print "\nusing the following staples:"
+    print( "\nusing the following staples:" )
     for staple in staples:
-        print staple.name
+        print( staple.name )
 
-    print '\nOutput filename:'
-    print outFile
+    print( '\nOutput filename:' )
+    print( outFile )
 
-    print '\nRotations:'
-    print rotations
+    print( '\nRotations:' )
+    print( rotations )
 
 
     # count the staples
@@ -1813,8 +1814,5 @@ if __name__ == '__main__':
         # explore all the angles and see if we can't fold the protein sensibly
         exploreAngles()
 
-    print "Done"
-
-
-
+    print( "Done" )
 
