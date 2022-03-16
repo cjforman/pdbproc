@@ -362,7 +362,7 @@ command is one of:
 
     elif command in ['backboneAtomGroups', 'BBAG', 'bbag']:
         if len(sys.argv)==4:
-            params = sys.argv[3]
+            params = [sys.argv[3]]
         else:
             print("backboneAtomGroups: Specify inpfile and resflle:  BBAG inpfile angRange")
             exit(1)
@@ -815,7 +815,6 @@ if __name__ == '__main__':
             pl.readpucker(infile,params)
 
         elif command in ['backboneAtomGroups', 'BBAG', 'bbag']:
-            print(params)
             pl.backboneAtomGroups(infile, float(params[0]) )
 
         elif command in ['crankShaftGroups', 'crankshaftgroups', 'csg']:

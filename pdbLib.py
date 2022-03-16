@@ -210,7 +210,7 @@ def backboneAtomGroups(infile, angRange):
         
         # loop through each residue in the chain and extract the list of atoms from the dictionary 
         for _, residue in residues.items():
-            
+
             # for each residue create a dictionary with a list of all atoms from CA in that residue to the end of each chain
             atomGroupsDictList.append( createEndOfChainRotationGroupDict(chain, residue, 'CA', probSelect, rotScaleFactor=angRange) )
             
@@ -422,7 +422,6 @@ def createSideChainRotationGroupDictList(resAtomList, probSelect=0.1):
 # creates a dictionary storing all the atoms from the given atom in the given residue until the end of the chain.
 # leaves out the side chain from the current residue. 
 def createEndOfChainRotationGroupDict(atoms, residueAtomList, atomName, probSelect, rotScaleFactor=0.1):
-    
     startAtom = None
     outDict = {'numAtoms':0, 'atoms':[]} #returns an empty dictionary of a start atom cannot be found. 
      
