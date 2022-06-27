@@ -121,10 +121,23 @@ command is one of:
         1 10
         1 100
         35 39
-
+   
     generateCTAtomGroups, GCTAG infile
         takes a initial_cis_trans_state file and creates an atomgroups file for all the CIS peptide bonds. Uses information
         in the pdb file pointed at by infile to help construct the atomgroups file
+
+    generateFreezeDryGroups gfg infile resIdRBody1 resIdRBody2 angRange sidechains
+    
+        generates a rigidbody file and atomgroups files for the freezeDry process. 
+        
+        for the given pdb specifies:
+           a rigid body which goes from the NTerm to the last carbon of amino acid with resId resIdRBody1
+           a rigid body which goes from the Nitrogen of amino acid with resId resIdRBody2 to the CTerm
+           a sets up an atomsgroup file which has groups from the CA and N of each amino acid between 
+           resIdRBody1 and resIdRBody2 to the CTerm.
+           specify the angRange of rotation for each group rotation.
+           Decide if the side groups of the amino acids between resIdRBody1 and resIdRBody2 should be included in the atomsgroups file
+            
 
     groupAtomsXYZ, gAX or gax inpfile
         reads the PDB and dumps the atoms XYZ file, but relabels the atom types according 
@@ -211,8 +224,8 @@ command is one of:
         between endo and exo. If OH flag is not zero also outputs the OH group rotations.
         Scale Fac scales the rotation factor. probRot is the probability of a rotation occurring.
         
-    ramachandran or rmc inpfile
-        Makes a ramachandran plot of the pdb file.
+    ramachandran or rmc inpfile, configFile
+        Makes a ramachandran plot of the pdb file.  the plot settings are controlled via the configFilej JSON
         
     readChirality or rc inpfile [outfile]
         Checks the chirality state of each proline and hydroxyproline  
@@ -397,6 +410,14 @@ command is one of:
             print("GCTAG: Must specify inpfile:   GCTAG inpfile")
             exit(1)      
 
+    elif command in ['generateFreezeDryGroups', 'gfg', 'GFG']:
+        if len(sys.argv)!=7:
+            print("GCG: Must specify: GFG inpfile resIdRBody1 resIdRBody2 angRange sideChains")
+            exit(1)
+        else:
+            params=sys.argv[3:]
+            print("generateFreezeDry params: ", params)      
+
     elif command in ['createCTFile', 'cCTF']:
         if len(sys.argv)==5:
             params=sys.argv[3:]
@@ -484,11 +505,12 @@ command is one of:
         print("fc params: " + params)
 
     # ramachandran 
-    elif command in ['ramachandran', 'rmc']:
-        params = [ pl.fileRootFromInfile(infile)+'.gplt' ]
-        params.append(pl.fileRootFromInfile(infile)+'.rama')
-        
-        print("ramachandran plot command not implemented: ", params)
+    elif command in ['ramachandran', 'rmc', 'rama']:
+        if len(sys.argv)==4:
+            params = [ sys.argv[3] ]
+            print("ramachandran plot: pdbFile: " + sys.argv[2] + ", figure Config:" + sys.argv[3])
+        else:
+            print(" usage:  pdbproc rama <infile.pdb> <figConfig.json>")
 
     #replace pdb with xyz data
     elif command in ['replacePdbXyz','xyz2pdb']:
@@ -833,6 +855,9 @@ if __name__ == '__main__':
         elif command in ['generateCTAtomGroups', 'GCTAG']:
             pl.generateCTAtomGroups(infile)
 
+        elif command in ['generateFreezeDryGroups', 'gfg', 'GFG']: 
+            pl.generateFreezeDryGroups(infile, int(params[0]), int(params[1]), float(params[2]), bool(params[3]) )
+
         elif command in ['eliminateCIS', 'eCIS']:
             pl.eliminateCIS(infile)
 
@@ -868,6 +893,9 @@ if __name__ == '__main__':
         
         elif command in ['flipCT', 'fct']:
             pl.flipCT(infile, params)
+        
+        elif command in ['ramachandran', 'rama']:
+            pl.ramachandran(infile, params[0])
         
         elif command in ['renameTermini','rt','rT','RT']:
             pl.renameTerminiTop(params[1],infile, int(params[0]))

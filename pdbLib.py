@@ -8,6 +8,7 @@ from mpl_toolkits.mplot3d import proj3d
 from matplotlib.patches import FancyArrowPatch
 import copy as cp
 import glob
+import json
 
 # A global dictionary containing the information on which side groups can rotate for the various amino acids.
 # don't include the rotation axis in the list of atoms 
@@ -132,6 +133,86 @@ def generateRigidBodyInput(infile, Cis_Trans_File):
 
     writeTextFile(outlist, "rbodyconfig")
 
+def generateFreezeDryGroups(infile, rBody1Id, rBody2Id, angRange, includeSideChains=False):
+
+    # get all the atoms
+    atoms = readAllAtoms(infile)
+
+    # re-assign the chain letters to each atom so there are distinct chain letters for each chain 
+    assignChains(atoms)
+    
+    # generate list of atoms in each chain
+    chains = breakAtomsInToChains(atoms)
+    
+    # for each chain break the list into residue sets
+    ChainResidues = [ breakAtomsIntoResidueDicts(chain) for chain in chains ]
+    
+    # count the overall number of residues to give each group 1/2N chance of being picked. (2 groups come out of each residue)
+    numResidues = rBody2Id - rBody1Id
+    probSelect = 1.0/(2.0 * float(numResidues))
+    
+    # create a list of dictionaries that defines each rotation group  
+    atomGroupsDictList = []
+    
+    # loop through each chain 
+    for chain, residues in zip(chains, ChainResidues):
+        
+        # loop through each residue in the chain and extract the list of atoms from the dictionary 
+        for _, residue in residues.items():
+            resid = residue[0][5]
+            # Only include residues whose id lies between the specified values (not including the end points)
+            if resid>rBody1Id and resid<rBody2Id:
+
+                # for each residue create a dictionary with a list of all atoms from CA in that residue to the end of each chain
+                atomGroupsDictList.append( createEndOfChainRotationGroupDict(chain, residue, 'CA', probSelect, rotScaleFactor=angRange) )
+                
+                # for each residue create a dictionary with a list of all atoms from N in that residue to the end of each chain
+                atomGroupsDictList.append( createEndOfChainRotationGroupDict(chain, residue, 'N', probSelect, rotScaleFactor=angRange) )
+
+    if includeSideChains:
+        print("Adding Side Chain Rotations")
+        atomGroupsDictList += makeSideChainsRotationGroupDictList(atoms, minRes=rBody1Id, maxRes=rBody2Id)
+    else:
+        print("No Side Chain Rotations were added")
+
+    # write the atomgroups file
+    print("Writing Atomgroups file")
+    writeAtomGroups("atomgroups", atomGroupsDictList)
+    
+    
+    # write out the atom groups as separate PDBS for debugging. 
+    # for rotGroupDict in atomGroupsDictList:
+    #     writeAtomsToTextFile(rotGroupDict['atoms'], 'groupPDBS/'+rotGroupDict['name'] + '.pdb')
+
+    # now do the rigidbodies - write the coordsini rigid file
+    configOutlist = []
+    for atom in atoms:
+        configOutlist.append(str(atom[7]) + " " + str(atom[8]) + " " + str(atom[9]) + "\n")
+        writeTextFile(configOutlist, "coordsinirigid")
+
+    rigidBodyList1 =[]
+    rigidBodyList2 =[]
+    
+    outList = []
+    for atom in atoms:
+        if atom[5]<=rBody1Id:
+            rigidBodyList1.append(atom[1])
+    
+        if atom[5]>=rBody2Id:
+            rigidBodyList2.append(atom[1])
+
+    for rBGroup in [rigidBodyList1, rigidBodyList2]:
+        outList.append( "GROUP " + str( len( rBGroup ) ) + "\n" )
+        for atomIndex in rBGroup:
+            outList.append( str( atomIndex ) + "\n" )
+        outList.append("\n")
+
+    print("Writing Rigidbody file")
+    writeTextFile(outList, "rbodyconfig")
+
+
+    print("Done")
+
 
 # checks a cis_trans_state file for CIS atoms. 
 # Returns a list of GMIN atomic indices of atoms involved in the errant dihedral if there are any.
@@ -155,6 +236,7 @@ def checkFileForCIS(filename):
             outList.append([ int(index) for index in atom.split()])
 
     return outList
+
     
 # splits the peptide bond into two groups and rotates them random amounts each.
 # leads to transitions between CIS and Trans isomerisations.    
@@ -351,23 +433,24 @@ def writeAtomGroups(filename, atomGroupDictList):
 
 # loops through the residues defined in the atoms list and 
 # generates a list of dictionaries each defining possible side chain rotations for each kind of residue 
-def makeSideChainsRotationGroupDictList(atoms):
+def makeSideChainsRotationGroupDictList(atoms, minRes=0, maxRes=np.inf):
     # creates a dictionary of lists of atoms in each residue keyed by the residue numbers
     residues = breakAtomsIntoResidueDicts(atoms)
     
-    # computes probability of selecting each residue as 1/number of residues (len of residues dictionary)
-    probSelect = 1.0 / float(len(residues))
+    # computes probability of selecting each residue as 1/number of residues
+    probSelect = 1.0 / float(maxRes - minRes + 1)
 
     # create an empty list for output 
     outList = []
     
     # loop through each residue in the residues dictionary
     for residue in residues:
-        
-        # takes the list of atoms define in each residue dictionary entry and returns a list of rotation group dictionaries,
-        # there is one such rotation group dictionary for each rotatable sub group of the side chain.
-        # sets the probability of selection of each group to be 1/number of residues
-        outList += createSideChainRotationGroupDictList(residues[residue], probSelect=probSelect)
+        # only use residues within a certain range. Defaults from 0 to infinity
+        if residue>=minRes and residue<=maxRes: 
+            # takes the list of atoms define in each residue dictionary entry and returns a list of rotation group dictionaries,
+            # there is one such rotation group dictionary for each rotatable sub group of the side chain.
+            # sets the probability of selection of each group to be 1/number of residues
+            outList += createSideChainRotationGroupDictList(residues[residue], probSelect=probSelect)
 
     return outList
 
@@ -1466,7 +1549,7 @@ def puckerBreakDown(infile):
     
     return
   
-def residueInfo(infile,outfile):
+def residueInfo(infile, outfile):
     atoms = readAllAtoms(infile)
   
     outputArray = generateResidueInformation(atoms)
@@ -1483,6 +1566,106 @@ def residueInfo(infile,outfile):
     writeTextFile(outputLines,outfile)
     
     return
+
+
+def ramachandran(infile, configFile):
+    
+    params = loadJson(configFile)
+
+    atoms = readAllAtoms(infile)
+    
+    _, _, phi, psi= generatePhiPsi(atoms, infile[:-4] + '.rama')
+    
+    createRamaPlot(phi, psi, infile[:-4]+'.png', params)
+
+
+def createRamaPlot(phi, psi, filename, settings):
+    plt.figure(figsize=(settings['figsizex'], settings['figsizey']))
+    try:
+        plotRanges = settings['plotRanges']
+        labels = []
+        for plotRange in plotRanges:
+            labels.append(plotRange)
+            s = plotRanges[plotRange]['start']
+            e = plotRanges[plotRange]['end']
+            pm = plotRanges[plotRange]['plotMarker']
+            plt.plot(phi[s:e], psi[s:e], pm)
+        plt.legend(labels)
+    except KeyError:
+        plt.plot(phi, psi, settings['plotMarker'])
+    plt.xlabel(settings['xlabel'], fontsize=settings['labelfontsize'])
+    plt.ylabel(settings['ylabel'], fontsize=settings['labelfontsize'])
+    plt.title(settings['title'] + " " + filename, fontsize=settings['titlefontsize'])
+    plt.xlim([settings['phiMin'], settings['phiMax']])
+    plt.ylim([settings['psiMin'], settings['psiMax']])
+    plt.xticks(fontsize=settings['tickfontsize'])
+    plt.yticks(fontsize=settings['tickfontsize'])
+    try:
+        outFilename = settings['pngName']
+    except KeyError:
+        outFilename = filename
+    plt.savefig(outFilename)
+    plt.show()
+    return
+
+
+def generatePhiPsi(atoms, outfile):
+
+    resids, resnames, phis, psis = computePhiPsi(atoms)
+
+    outputLines=[]
+    
+    #Res Id, phi, psi
+    for res, resname, phi, psi in zip(resids, resnames, phis, psis):
+        l = str(res) + ', ' + str(resname) + ', ' + str(phi) + ', ' + str(psi) + '\n'
+        print(l)
+        outputLines.append(l)
+        
+    #write the residue information to file
+    writeTextFile(outputLines, outfile)
+
+
+    return resids, resnames, phis, psis
+
+def computePhiPsi(atoms):
+
+    # identify the separate chains in the pdb atom data
+    chains = breakAtomsInToChains(atoms)
+
+    resIds = []
+    resNames = []
+    phis = []
+    psis = []
+    
+    # loop through each chain
+    atomsInResiduesInChainList=[]
+    for chain in chains:
+        # create a list of groups of atoms which are grouped into residues, which in turn are grouped into chains
+        atomsInResiduesInChainList.append( breakChainIntoResidues(chain) )
+        
+    # Loop through the list of atoms in residues in chains lists. first consider each chain in turn.
+    for residueList in atomsInResiduesInChainList:
+        
+        # loop through all the residues in the chain starting from res = 2 to res = N - 1.
+        for resIndex in range(1, len(residueList) - 1  ):
+            #extract the indices of three adjacent residues
+            prevRes = resIndex-1
+            curRes = resIndex
+            nextRes = resIndex+1
+
+            #compute the psi, phi and omega torsion angles for each residue
+            torsionAngles = computeTorsion( residueList[prevRes], residueList[curRes], residueList[nextRes])
+            
+            #write out the output line
+            resIds.append(residueList[curRes][0][5])
+            resNames.append( residueList[curRes][0][3] )
+            phis.append( torsionAngles[0] )
+            psis.append( torsionAngles[1] )
+
+          
+    return resIds, resNames, phis, psis
+
+
 
 def generateResidueInformation(atoms):
 
@@ -1538,7 +1721,7 @@ def generateResidueInformation(atoms):
             #if we're a gly not in the last group then find the H-Bond length to the C=O of the next P residue in the next chain along
             if residues[curRes][0][3] in ['GLY'] and curRes<35:
                 #compute distance between curResidue H in NH and the O of the associated Pro - X residue C-0 in the other chain.
-                HBondDist=ComputeHBondDistance(residues[curRes],atomsInResiduesInChainList[nextChain][ProXIndex])
+                HBondDist = ComputeHBondDistance(residues[curRes],atomsInResiduesInChainList[nextChain][ProXIndex])
                 
             #write out the output line
             outputArrayLine=[residues[curRes][0][5],chi[0],chi[1],chi[2],chi[3],chi[4], torsionAngles[0], torsionAngles[1], torsionAngles[2], puckerState, HBondDist]
@@ -1858,6 +2041,13 @@ def writeAtomsToTextFile(atoms, filename):
         vst.write(l)
     vst.close()
     return
+
+
+def loadJson(filename):
+    with open( filename ) as f:
+        data = json.load(f)
+    return data
+
 
 def readTextFile(filename):
     #read line data in from file
