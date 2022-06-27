@@ -196,10 +196,10 @@ def generateFreezeDryGroups(infile, rBody1Id, rBody2Id, angRange, includeSideCha
     outList = []
     for atom in atoms:
         if atom[5]<=rBody1Id:
-            rigidBodyList1.append(atom[1])
+            rigidBodyList1.append(atom[0])
     
         if atom[5]>=rBody2Id:
-            rigidBodyList2.append(atom[1])
+            rigidBodyList2.append(atom[0])
 
     for rBGroup in [rigidBodyList1, rigidBodyList2]:
         outList.append( "GROUP " + str( len( rBGroup ) ) + "\n" )
