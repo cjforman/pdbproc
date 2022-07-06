@@ -52,8 +52,8 @@ AARotTemplates = {
              ('CB','CG'): ['HG2', 'HG3', 'CD', 'OE1', 'OE2'],
              ('CG','CD'): ['OE1', 'OE2'] },
 
-    'GLY': { ('CA','N'): ['HA1', 'HA2' ],
-             ('CA','C'): ['HA1', 'HA2' ] },
+    'GLY': { ('CA','N'): ['HA2', 'HA3' ],
+             ('CA','C'): ['HA2', 'HA3' ] },
     
     'GLN': { ('CA','C'): ['HA', 'CB', 'HB2', 'HB3', 'CG', 'HG2', 'HG3', 'CD', 'OE1', 'NE2', 'HE21', 'HE22'],
              ('CA','N'): ['HA', 'CB', 'HB2', 'HB3', 'CG', 'HG2', 'HG3', 'CD', 'OE1', 'NE2', 'HE21', 'HE22'],
