@@ -198,7 +198,7 @@ def generateFreezeDryGroups(infile, rBody1Id, rBody2Id, angRange, includeSideCha
     
     # count the overall number of residues to give each "residue to end" group a 1/2N chance of being picked. 
     # 2 groups come out of each residue.
-    numResidues = rBody2Id - rBody1Id
+    numResidues = rBody2Id - rBody1Id + 1
     probSelect = 1.0/(2.0 * float(numResidues))
     
     # create a list of dictionaries that defines each rotation group  
