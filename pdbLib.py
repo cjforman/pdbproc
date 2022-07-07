@@ -211,8 +211,8 @@ def generateFreezeDryGroups(infile, rBody1Id, rBody2Id, angRange, includeSideCha
         for _, residue in residues.items():
             resid = residue[0][5]
             
-            # Only include residues whose id lies between the specified values (not including the end points)
-            if resid>rBody1Id and resid<rBody2Id:
+            # Include residues whose ids lie between the specified values (including the end points)
+            if resid>=rBody1Id and resid<=rBody2Id:
 
                 for atom in residue:
                     if atom[1]=='C':
