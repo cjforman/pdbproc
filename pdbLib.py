@@ -231,8 +231,8 @@ def generateFreezeDryGroups(infile, rBody1Id, rBody2Id, angRange, includeSideCha
                 atomGroupsDictList.append( createEndOfChainRotationGroupDict2(chain, CA, C, probSelect, rotScaleFactor=angRange) )
 
     if includeSideChains:
-        print("Adding Side Chain Rotations") # only for those groups within the range not at the end points of the range.
-        atomGroupsDictList += makeSideChainsRotationGroupDictList(atoms, minRes=rBody1Id + 1, maxRes=rBody2Id - 1)
+        print("Adding Side Chain Rotations") # for those groups within the range including end points of the range.
+        atomGroupsDictList += makeSideChainsRotationGroupDictList(atoms, minRes=rBody1Id, maxRes=rBody2Id)
     else:
         print("No Side Chain Rotations were added")
 
