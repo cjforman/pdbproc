@@ -9,6 +9,8 @@ from matplotlib.patches import FancyArrowPatch
 import copy as cp
 import glob
 import json
+from setuptools.sandbox import AbstractSandbox
+
 
 # A global dictionary containing the information on which side groups can rotate for the various amino acids.
 # don't include the rotation axis in the list of atoms 
@@ -1671,6 +1673,102 @@ def residueInfo(infile, outfile):
     return
 
 
+def ramachandrans(infile, configFile):
+    params = loadJson(configFile)
+    
+    # create a handle to a matplot lib figure of the right size
+    fig = plt.figure(figsize=(params['figsizex'], params['figsizey']))
+    
+    rama3D = 0
+    try:
+        if params['rama3D']==1:
+            ax = fig.add_subplot(projection='3d')
+            rama3D = 1
+    except KeyError:
+        pass
+
+    # loop through each file and extract the information to plot in the current figure
+    legendLabels = []
+    legendHandles = []
+    
+    try: 
+        plotKeys = params['order']
+    except KeyError:
+        plotKeys = [ key for key in params['plotDetails'] ]
+    
+    for plotDictKey in plotKeys:
+        # get the file name, sets to plot and marker information
+        filename = params['plotDetails'][plotDictKey]['filename']
+        subsets = params['plotDetails'][plotDictKey]['subsets']
+        startRes = params['plotDetails'][plotDictKey]['startRes'] # start & end res mainly for filtering ACEs and NMEs
+        endRes = params['plotDetails'][plotDictKey]['endRes']
+        print("processing file: ", filename)
+        
+        # load file and generate Phi Psi angles for entire file
+        atoms = readAllAtoms(filename)
+        resIds, resNames, phi, psi= generatePhiPsi(atoms, filename[:-4] + '.rama')
+
+        # cope with -ve index value for endRes index
+        if endRes<0:
+            endRes = len(phi) + endRes
+
+        # loop through each subset and extract the requested information
+        # subset is a dictionary whose keys are a res name to plot, and whose entries are the plotmarker
+        for resName in subsets:
+                style = subsets[resName]
+
+                # figure out indices that match the specified conditions
+                if resName=='All':
+                    plotIndices = [ i for i in range(len(phi)) if ( resIds[i]>=startRes and resIds[i]<=endRes ) ]
+                else:
+                    plotIndices = [ i for i in range(len(phi)) if ( resNames[i]==resName and resIds[i]>=startRes and resIds[i]<=endRes ) ]
+                
+                
+                if rama3D:
+                    # plot the phi, psi points for the current subPlot
+                    ax.scatter(np.array(phi)[plotIndices],
+                               np.array(psi)[plotIndices],
+                               np.array(resIds)[plotIndices],
+                               marker=style['marker'],
+                               s=style['markersize'],
+                               c=style['markerfacecolor'])
+                else:                
+                    # plot the phi, psi points for the current subPlot                
+                    pHandle, = plt.plot(np.array(phi)[plotIndices], 
+                                        np.array(psi)[plotIndices], 
+                                        markeredgewidth=int(style['markeredgewidth']),
+                                        markerfacecolor=style['markerfacecolor'], 
+                                        markeredgecolor=style['markeredgecolor'],
+                                        marker=style['marker'], 
+                                        markersize=style['markersize'],
+                                        linestyle=style['linestyle'])
+                
+                
+                    if len(params['plotDetails'])>1:
+                        legendLabels.append(plotDictKey + " " + resName)
+                    else:
+                        legendLabels.append(resName)
+    
+                    legendHandles.append(pHandle)
+ 
+    if not rama3D:
+        if params['includeLegend']==1:
+            plt.legend(legendHandles, legendLabels, loc=params['legendLoc'], fontsize=params['legendFontSize'], frameon=False)
+            
+        # set global params and behaviour for the figure
+        plt.xlabel(params['xlabel'], fontsize=params['labelfontsize'])
+        plt.ylabel(params['ylabel'], fontsize=params['labelfontsize'])
+        title = params['title']
+        plt.title(title, fontsize=params['titlefontsize'])
+        plt.xticks(params['xticks'], fontsize=params['tickfontsize'])
+        plt.yticks(params['yticks'], fontsize=params['tickfontsize'])
+        plt.xlim([params['phiMin'], params['phiMax']])
+        plt.ylim([params['psiMin'], params['psiMax']])
+
+    plt.savefig(params['pngName'])
+    plt.show()
+
+    
 def ramachandran(infile, configFile):
     
     params = loadJson(configFile)
@@ -1698,7 +1796,13 @@ def createRamaPlot(phi, psi, filename, settings):
         plt.plot(phi, psi, settings['plotMarker'])
     plt.xlabel(settings['xlabel'], fontsize=settings['labelfontsize'])
     plt.ylabel(settings['ylabel'], fontsize=settings['labelfontsize'])
-    plt.title(settings['title'] + " " + filename, fontsize=settings['titlefontsize'])
+    title = settings['title']
+    try:
+        if settings['includeFilenameInTitle']:
+            title = settings['title'] + " " + filename 
+    except KeyError:
+        pass
+    plt.title(title, fontsize=settings['titlefontsize'])
     plt.xlim([settings['phiMin'], settings['phiMax']])
     plt.ylim([settings['psiMin'], settings['psiMax']])
     plt.xticks(fontsize=settings['tickfontsize'])
@@ -1721,7 +1825,6 @@ def generatePhiPsi(atoms, outfile):
     #Res Id, phi, psi
     for res, resname, phi, psi in zip(resids, resnames, phis, psis):
         l = str(res) + ', ' + str(resname) + ', ' + str(phi) + ', ' + str(psi) + '\n'
-        print(l)
         outputLines.append(l)
         
     #write the residue information to file

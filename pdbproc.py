@@ -226,6 +226,11 @@ command is one of:
         
     ramachandran or rmc inpfile, configFile
         Makes a ramachandran plot of the pdb file.  the plot settings are controlled via the configFilej JSON
+    
+    ramachandrans or rmcs inpfile, configFile
+        Makes a ramachandran plot of each file in a glob defined in the config file.
+        The plot settings are controlled via the configFile in json format as for ramachandran
+    
         
     readChirality or rc inpfile [outfile]
         Checks the chirality state of each proline and hydroxyproline  
@@ -511,6 +516,14 @@ command is one of:
             print("ramachandran plot: pdbFile: " + sys.argv[2] + ", figure Config:" + sys.argv[3])
         else:
             print(" usage:  pdbproc rama <infile.pdb> <figConfig.json>")
+
+    # ramachandrans 
+    elif command in ['ramachandrans', 'rmcs', 'ramas']:
+        if len(sys.argv)==4:
+            params = [ sys.argv[3] ]
+            print("ramachandran plots: dummy pdbFile: " + sys.argv[2] + ", figure Config:" + sys.argv[3])
+        else:
+            print(" usage:  pdbproc rama <dummy.pdb> <figConfig.json>")
 
     #replace pdb with xyz data
     elif command in ['replacePdbXyz','xyz2pdb']:
@@ -894,8 +907,11 @@ if __name__ == '__main__':
         elif command in ['flipCT', 'fct']:
             pl.flipCT(infile, params)
         
-        elif command in ['ramachandran', 'rama']:
+        elif command in ['ramachandran', 'rmc', 'rama']:
             pl.ramachandran(infile, params[0])
+        
+        elif command in ['ramachandrans', 'rmcs', 'ramas']:
+            pl.ramachandrans(infile, params[0])
         
         elif command in ['renameTermini','rt','rT','RT']:
             pl.renameTerminiTop(params[1],infile, int(params[0]))
