@@ -1,16 +1,20 @@
 #!/usr/bin/env python
 import sys, os
 import numpy as np
+from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.pyplot as plt  
-from scipy.optimize import fmin_l_bfgs_b
-from itertools import chain
-from mpl_toolkits.mplot3d import proj3d
+from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.patches import FancyArrowPatch
+from scipy.optimize import fmin_l_bfgs_b, minimize
+import scipy.stats as st
+from itertools import chain
 import copy as cp
 import glob
 import json
-from setuptools.sandbox import AbstractSandbox
-
+import random as rnd
+import itertools as iter
+from scipy import signal
+import networkx as nx
 
 # A global dictionary containing the information on which side groups can rotate for the various amino acids.
 # don't include the rotation axis in the list of atoms 
@@ -142,6 +146,34 @@ AARotTemplates = {
              ('CB', 'CG2'): [ 'HG21', 'HG22', 'HG23']}
     }
 
+AAColDict = {
+    
+    'ALA': "#ec6677", # pink
+    'GLY': "#000000", # black
+    'ARG': "#4422df", # blue
+    'CYS': "#ffff00", # yellow
+    'GLN': "#0033ff", # cyan
+    'PRO': "#dd00dd", # purple
+    'SER': "#555555", # grey
+    'TYR': "#26ff26", # green
+
+    'ACE': "#6ac7ea",
+    'ASN': "#6ac7ea",
+    'ASP': "#6ac7ea",
+    'HIS': "#6ac7ea",
+    'GLU': "#6ac7ea",
+    'HYP': "#6ac7ea",
+    'ILE': "#6ac7ea",
+    'LEU': "#6ac7ea",
+    'LYS': "#6ac7ea",
+    'MET': "#6ac7ea",
+    'NME': "#6ac7ea",
+    'PHE': "#6ac7ea",    
+    'THR': "#6ac7ea",
+    'TRP': "#6ac7ea",
+    'VAL': "#6ac7ea"
+    }
+
 class Arrow3D(FancyArrowPatch):
     def __init__(self, xs, ys, zs, *args, **kwargs):
         FancyArrowPatch.__init__(self, (0,0), (0,0), *args, **kwargs)
@@ -153,6 +185,1523 @@ class Arrow3D(FancyArrowPatch):
         self.set_positions((xs[0],ys[0]),(xs[1],ys[1]))
         FancyArrowPatch.draw(self, renderer)
 
+def dumpCAsAsPDB(infile):
+    atoms = readAtoms(infile)
+    print("Searching Atoms")
+    newAtoms = [ atom for atom in atoms if atom[1]=='CA']
+    print("Writing Atoms")
+    writeAtomsToTextFile(newAtoms, infile[0:-4] + "_CAOnly" + ".pdb")
+
+def dumpParticularAtoms(infile, params):
+    atoms = readAtoms(infile)
+    print("Searching Atoms")
+    newAtoms = [ atom for atom in atoms if atom[1] in params['atomsToDump']]
+    try:
+        filename = params['outfile']
+    except KeyError:
+        filename = infile[0:-4] + "_" + '_'.join(params['atomsToDump']) + ".pdb"
+    print("Writing Atoms")
+    writeAtomsToTextFile(newAtoms, filename)
+
+def funkychicken():
+    ''' test function for doing 2D correlation'''
+    from scipy import signal
+    from scipy import misc
+
+    rng = np.random.default_rng()
+    face = misc.face(gray=True) - misc.face(gray=True).mean()
+    template = np.copy(face[300:365, 670:750])  # right eye
+    template -= template.mean()
+    face = face + rng.standard_normal(face.shape) * 50  # add noise
+    corr = signal.correlate2d(face, template, boundary='symm', mode='same')
+    y, x = np.unravel_index(np.argmax(corr), corr.shape)  # find the match
+
+    fig, (ax_orig, ax_template, ax_corr) = plt.subplots(3, 1, figsize=(3, 7.5))
+    ax_orig.imshow(face, cmap='gray')
+    ax_orig.set_title('Original')
+    ax_orig.set_axis_off()
+    ax_template.imshow(template, cmap='gray')
+    ax_template.set_title('Template')
+    ax_template.set_axis_off()
+    ax_corr.imshow(corr, cmap='gray')
+    ax_corr.set_title('Cross-correlation')
+    ax_corr.set_axis_off()
+    ax_orig.plot(x, y, 'ro')
+    fig.show()
+
+
+def pairwisedistance(infile, params):
+    
+    print("Loading file")
+    atoms = readAtoms(params['rootFilename'] + '.pdb')
+    
+    print("Generating graphs based on distances and bonding")
+    # create two multigraphs. One for all distances and one only for proximal residues. 
+    FullDistanceGraph = nx.MultiGraph()
+    ProximityGraph = nx.MultiGraph()
+ 
+    # set up dictionary to store properties associate with each node
+    # 'name' is the main node hashable for identifying each node. 
+    print("Generating Nodes")
+    nodeDicts = [ {"name": str(atom[5]) + getSingleLetterFromThreeLetterAACode(atom[3]), 
+                  "reslet": getSingleLetterFromThreeLetterAACode(atom[3]), 
+                  "restype": atom[3], 
+                  "respos": np.array([atom[7], atom[8], atom[9]]), 
+                  "resid": atom[5]} for atom in atoms if atom[1]=='CA' ]
+ 
+    # sort the node dictionary into a list of dictionaries in resid order
+    sortedNodeList = sorted(nodeDicts, key=lambda nodeInfo: (nodeInfo[params['sortParam']], nodeInfo['resid']))
+ 
+    # create tuple pairs of names and nodeinfo in sorted order
+    sortedNodeTupleList = [ (n['name'], n) for n in sortedNodeList]
+ 
+    # generate a list of names of sortparam values in same order as they are in the NodeTupleList
+    sortNames = sorted( [ n[1][params['sortParam']] for n in sortedNodeTupleList ] )
+    
+    #find the index boundaries of where the sort params change in the block pattern.
+    adjacentTypes = np.array([ (r1, r2) for r1, r2 in zip(sortNames, sortNames[1:]) ]) 
+    indexBoundaries = np.where(np.array([ not r1==r2 for r1, r2 in zip(sortNames, sortNames[1:]) ]))[0]
+    print(adjacentTypes[indexBoundaries])
+    print(indexBoundaries)
+    
+    # generate list of unique names in same order they appear in the resNames List 
+    uniqueSortNames = sorted(list(set( sortNames ) )) 
+ 
+    # add each residue as a node in both networks
+    print("Adding Nodes to Network")
+    FullDistanceGraph.add_nodes_from(sortedNodeTupleList)
+    ProximityGraph.add_nodes_from(sortedNodeTupleList)
+
+    print("generating edge information")
+    # generate a list of edges along the protein backbone.
+    backbone_edges = [ (u['name'], v['name']) for u,v in zip(sortedNodeList, sortedNodeList[1:]) ]
+    
+    # compute distnace info beteen all node pairs and generate a list of weighted edges  
+    distList = [ ( pair[0]['name'],
+                   pair[1]['name'],
+                   np.linalg.norm(pair[1]['respos'] - pair[0]['respos']) ) for pair in iter.combinations(sortedNodeList, 2) ]
+
+    # Filter the list of edges containing distance info for those within dCutoff 
+    proxDistList = [ ( distInfo[0],
+                       distInfo[1],
+                       distInfo[2] ) for distInfo in distList if distInfo[2] < params['dCutoff'] ]
+
+ 
+    print("Adding edge information to Graph")
+    # add weighted edges based on the physical distance between all the nodes. Called that edge attribute distance  
+    FullDistanceGraph.add_weighted_edges_from( distList, weight='distance' )                   
+    ProximityGraph.add_weighted_edges_from( proxDistList, weight='distance' )
+    
+    
+    # add unweighted bond edges 
+    FullDistanceGraph.add_edges_from( backbone_edges )                 
+    ProximityGraph.add_edges_from( backbone_edges )
+    
+    # get the full adjacency matrix - the array of distances
+    distArray = nx.adjacency_matrix(FullDistanceGraph, FullDistanceGraph, weight='distance')
+    
+    #find the longest length in the graph
+    maxLength =  np.max(distArray)
+    
+    print('Creating Graph Figures')
+    fig = plt.figure()
+    colList = [ AAColDict[n['restype']] for n in nodeDicts ]
+    pos = nx.spiral_layout(ProximityGraph)
+    nx.draw_networkx_edges(ProximityGraph, pos, edgelist=backbone_edges, edge_color='r', width=5)
+    nx.draw(ProximityGraph, pos, with_labels=True, node_color=colList, font_size=8, node_size=50)
+    plt.axis('equal')
+    plt.savefig(params['rootFilename'] + '_spider_' + str(params['dCutoff']) + '.png',dpi=600)
+    plt.show()
+    
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    cPoint = params['dCutoff']/maxLength
+    #colors = ["red", "white", "black"]
+    cdict = {'red':   [[0.0,  1.0, 1.0],
+                       [cPoint,  0.0, 0.0],
+                       [2 * cPoint, 0.0, 1.0],
+                       [1.0,  0.0, 0.0]],
+             'green': [[0.0,  0.0, 0.0],
+                       [cPoint, 0.0, 0.0],
+                       [2 * cPoint, 1.0, 1.0],
+                       [1.0, 0.0, 0.0]],                       
+             'blue':  [[0.0,  0.0, 0.0],
+                       [cPoint,  1.0, 1.0],
+                       [2 * cPoint, 0.0, 1.0],
+                       [1.0,  0.0, 0.0]]}
+    cutoffColMap = LinearSegmentedColormap("cutoffMap", segmentdata=cdict, N=1000)
+    cax = ax.matshow(distArray.todense(), cmap=cutoffColMap, vmin=0, vmax=maxLength)
+    fig.colorbar(cax)
+    if not params['sortParam']=='resid':
+        openIndexBoundaries = np.insert(indexBoundaries, [0, len(indexBoundaries)], [0, len(sortNames)] )
+        plt.axis('off')
+        for resname, ord1, ord2 in zip(uniqueSortNames, openIndexBoundaries[0:-1], openIndexBoundaries[1:]):
+            plt.plot( [0, len(sortNames)], [ord2, ord2], 'm-')
+            plt.plot( [ord2, ord2], [0, len(sortNames)], 'm-')
+            ord = (ord1 + ord2)/2
+            ax.text(-10, ord, resname)
+            ax.text( ord, -10, resname)
+    plt.savefig(params['rootFilename'] + '_distArray.png',dpi=600)
+    plt.show()
+    
+
+def deleteGraphEdges(G, threshold):
+    long_edges = list(filter(lambda e: e[2] > threshold, (e for e in G.edges.data('weight'))))
+    le_ids = list(e[:2] for e in long_edges)
+
+    # remove filtered edges from graph G
+    G.remove_edges_from(le_ids)
+    
+    return G
+    
+    
+
+# creates an array which are the CA positions of each set of residues of interest
+def generateSetsOfResidues(atoms, pairDef='all'):
+
+    # if pair Def is all, then generate a list of positions of all the CAs and the residue type      
+    if pairDef=='all':
+        positions = [ np.array([atom[7], atom[8], atom[9]]) for atom in atoms if atom[1]=='CA' ]
+    
+    return positions
+    
+def findall(p, s):
+    '''Yields all the positions of
+    the pattern p in the string s.'''
+    i = s.find(p)
+    while i != -1:
+        yield i
+        i = s.find(p, i + 1)
+
+def dumpTrainingSet(params):
+    
+    maxNumRejects = int(params['trainingSet']['numAttempts'])
+    trainingSetSize = int(params['trainingSet']['sizeTrainingSet'])
+    minDist = int(params['trainingSet']['minDist'])
+    
+    if params['trainingSet']['setType']=='Cylinder':
+        f = pickRandomPointOnCylinder
+        args = {'A': np.array(params['trainingSet']['pointA']), 
+                'B': np.array(params['trainingSet']['pointB']),
+                'R': float(params['trainingSet']['Radius'])}
+
+    if params['trainingSet']['setType']=='inCylinder':
+        f = pickRandomPointInCylindricalShell
+        args = {'A': np.array(params['trainingSet']['pointA']), 
+                'B': np.array(params['trainingSet']['pointB']),
+                'R1': float(params['trainingSet']['Radius1']),
+                'R2': float(params['trainingSet']['Radius2']),
+                'minZ': float(params['trainingSet']['minZ']),
+                'maxZ': float(params['trainingSet']['maxZ']),                
+                'minPhi': float(params['trainingSet']['minPhi']) * np.pi/180,
+                'maxPhi': float(params['trainingSet']['maxPhi']) * np.pi/180,
+                'phase': float(params['trainingSet']['phase']) * np.pi/180,
+                'axis': np.array(params['trainingSet']['axis'])}
+
+    if params['trainingSet']['setType']=='Sphere':
+        f = pickRandomPointOnSphere
+        args = {'A': np.array(params['trainingSet']['pointA']), 
+                'R': float(params['trainingSet']['Radius']),
+                'minPhi': float(params['trainingSet']['minPhi']) * np.pi/180,
+                'maxPhi': float(params['trainingSet']['maxPhi']) * np.pi/180,
+                'minTheta': float(params['trainingSet']['minTheta']) * np.pi/180,
+                'maxTheta': float(params['trainingSet']['maxTheta']) * np.pi/180,
+                'phase': float(params['trainingSet']['phase']) * np.pi/180,
+                'axis': np.array(params['trainingSet']['axis'])}
+
+    if params['trainingSet']['setType']=='inSphere':
+        f = pickRandomPointInSphericalShell
+        args = {'A': np.array(params['trainingSet']['pointA']), 
+                'R1': float(params['trainingSet']['Radius1']),
+                'R2': float(params['trainingSet']['Radius2']),
+                'minPhi': float(params['trainingSet']['minPhi']) * np.pi/180,
+                'maxPhi': float(params['trainingSet']['maxPhi']) * np.pi/180,
+                'minTheta': float(params['trainingSet']['minTheta']) * np.pi/180,
+                'maxTheta': float(params['trainingSet']['maxTheta']) * np.pi/180,
+                'phase': float(params['trainingSet']['phase']) * np.pi/180,
+                'axis': np.array(params['trainingSet']['axis'])}
+
+    if params['trainingSet']['setType']=='SpheroCylinder':
+        f = pickRandomPointInSpheroCylinderShell
+        args = {'A': np.array(params['trainingSet']['pointA']),
+                'B': np.array(params['trainingSet']['pointB']),
+                'R1': float(params['trainingSet']['Radius1']),
+                'R2': float(params['trainingSet']['Radius2']),
+                'minPhi': float(params['trainingSet']['minPhi']) * np.pi/180,
+                'maxPhi': float(params['trainingSet']['maxPhi']) * np.pi/180,
+                'minTheta': float(params['trainingSet']['minTheta']) * np.pi/180,
+                'maxTheta': float(params['trainingSet']['maxTheta']) * np.pi/180,
+                'phase': float(params['trainingSet']['phase']) * np.pi/180}
+
+
+    if params['trainingSet']['setType']=='MultiSpheroCylinder':
+        f = pickRandomPointInMultiSpheroCylinderShell
+        args = {'points': np.array(params['trainingSet']['points']),
+                'R1': float(params['trainingSet']['Radius1']),
+                'R2': float(params['trainingSet']['Radius2'])}
+
+
+    trainingSet = doPickPoints(f, trainingSetSize, maxNumRejects, minDist, **args)
+    
+    generateValidDummyPDB(trainingSet, params['trainingSet']['outputFilename'], params['trainingSet']['dummyAtomLine'])
+
+
+def cyl2XYZ(pos):
+    return np.array([pos[0] * np.cos(pos[1]), 
+                     pos[0] * np.sin(pos[1]), 
+                     pos[2]])
+    
+def cylBasis(axis=np.array([0.0, 0.0, 1.0]), basePoint=np.array([0.0, 0.0, 0.0]), zeroPoint=np.array([1.0, 0.0, 0.0])):
+
+    # ensure that axis is normalised
+    nHat = axis/np.linalg.norm(axis)
+    
+    # use the zero point vector to compute the vector perpendicular to the axis from which phi is measured. 
+    # Get the unit vector in this direction.
+    zeroPointZ = np.dot(zeroPoint - basePoint, nHat) # should be zero for a good zeroPoint, but doesn't matter if not. 
+    zeroPhiVec = zeroPoint - zeroPointZ * nHat - basePoint
+    zeroPhiVecHat =  zeroPhiVec/np.linalg.norm(zeroPhiVec)
+    
+    # compute the final basis vector for the cyl coords (defines the direction of +ve phi)
+    posPhiVecHat = np.cross(nHat, zeroPhiVecHat)
+
+    return nHat, zeroPhiVecHat, posPhiVecHat
+    
+
+# pick a random point on a cylinder
+def pickRandomPointOnCylinder(A, B, R):
+    # get the vector along the axis of the cylinder
+    axis = B - A
+    # get the length of the cylinder
+    H = np.linalg.norm(axis)
+    p = np.array( [ R,  # radial point on cylinder
+                    rnd.uniform(-np.pi, np.pi),  # azimuthal point on vertical cylinder 
+                    rnd.uniform(0, H) ] )
+    
+    x = cylToXYZ( p )
+    # get a random point on cylinder of radius R and height H pointing along the z axis. 
+    # perform a general translation on that point so the cylinder is pointing along A to B with its base point at A  
+    newX = translatePointsToNewFrame( [ x ] , # z height on initial cylinder
+                                      np.array([0.0, 0.0, 0.0]), # base point of initial cylinder
+                                      np.array([0.0, 0.0, 1.0]), # z axis of initial cylinder
+                                      0.0, # phase rotation about the axis of the cylinder before transformation (not really necessary for this application)
+                                      A,   # final position of base point
+                                      axis)# final direction of cylinder in 3 space 
+       
+    return newX[0]                                
+
+def pickRandomPointInCylindricalShell(A, B, R1, R2, minZ=0, maxZ=1, minPhi = -np.pi, maxPhi= np.pi, axis=np.array([0.0, 0.0, 1.0]), phase=0.0):
+
+    # get the vector along the axis of the cylinder
+    axis = B - A
+    # get the length of the cylinder
+    H = np.linalg.norm(axis)
+    p = np.array( [ np.abs(R2 - R1) * np.sqrt(rnd.uniform(0, 1)) + np.min([R2, R1]),  # radial point in cylinder
+                    rnd.uniform(minPhi, maxPhi),  # azimuthal point on vertical cylinder 
+                    rnd.uniform(minZ*H, maxZ*H) ] ) # point on the vertical axis. Can specify a range in units of H. 
+    
+    x = cylToXYZ( p )
+    
+    # get a random point on cylinder of radius R and height H pointing along the z axis. 
+    # perform a general translation on that point so the cylinder is pointing along A to B with its base point at A  
+    newX = translatePointsToNewFrame( [ x ] , # z height on initial cylinder
+                                      np.array([0.0, 0.0, 0.0]), # base point of initial cylinder
+                                      np.array([0.0, 0.0, 1.0]), # z axis of initial cylinder
+                                      phase, # phase rotation about the axis of the cylinder before transformation (not really necessary for this application)
+                                      A,   # final position of base point
+                                      axis)# final direction of cylinder in 3 space 
+       
+    return newX[0]
+
+
+# pick a random point on a sphere within the optional ranges defined
+def pickRandomPointOnSphere(A, R, minTheta=-np.pi/2, maxTheta=np.pi/2, minPhi = -np.pi, maxPhi= np.pi, axis=np.array([0.0, 0.0, 1.0]), phase=0.0):
+
+    theta = rnd.uniform(minTheta, maxTheta)
+    phi = rnd.uniform(minPhi, maxPhi)
+
+    # convert to XYZ
+    x = sphericalPolar2XYZ( np.array([ R, theta, phi  ] ) )
+
+    # perform a general translation on that spherical shell is rotated and translated such that 
+    # what was z axis is coincident with given axis and shell centered on A   
+    newX = translatePointsToNewFrame( [ x ] , # position of point
+                                      np.array([0.0, 0.0, 0.0]), # initial reference point (origin)
+                                      np.array([0.0, 0.0, 1.0]), # initial reference axis (z axis)
+                                      phase, # phase rotation about the axis of the sphere before transformation 
+                                      A,   # final position of sphere center
+                                      axis)# final direction of ref axis
+    
+    return newX[0]
+
+# pick a random point in a spherical shell at point A within the optional ranges defined
+def pickRandomPointInSphericalShell(A, R1, R2, minTheta=-np.pi/2, maxTheta=np.pi/2, minPhi = -np.pi, maxPhi= np.pi, axis = np.array([0.0, 0.0, 1.0]), phase=0.0):
+    r = rnd.uniform(R1, R2)
+    theta = rnd.uniform(minTheta, maxTheta)
+    phi = rnd.uniform(minPhi, maxPhi)
+
+    # convert to XYZ
+    x = sphericalPolar2XYZ( np.array([ r, theta, phi  ] ) )
+
+    # perform a general translation on that spherical shell is rotated and translated such that 
+    # what was z axis is coincident with given axis and shell centered on A   
+    newX = translatePointsToNewFrame( [ x ] , # position of point
+                                      np.array([0.0, 0.0, 0.0]), # initial reference point (origin)
+                                      np.array([0.0, 0.0, 1.0]), # initial reference axis (z axis)
+                                      phase, # phase rotation about the axis of the sphere before transformation 
+                                      A,   # final position of sphere center
+                                      axis)# final direction of ref axis
+    
+    return newX[0]
+
+# pick a random point in a sphero cylindrical shell from point A to point B with inner radius R1 and outer radius R2
+# can cope with R2<R1. Also specify the maximum elevation at the two end caps (enable cutaway circle around either pole)
+# can specify azimuthwal wedge along entire spherocylinder shell. Don't need to specify axis as it is defined by point A
+# and point B. 
+def pickRandomPointInSpheroCylinderShell(A, B, R1, R2, 
+                                         minTheta=-np.pi/2,
+                                         maxTheta=np.pi/2,
+                                         minPhi=-np.pi, 
+                                         maxPhi=np.pi, 
+                                         phase=0.0):
+    # get the vector along the axis of the cylinder
+    axis = B - A
+    
+    # get the length of the cylindrical part
+    H = np.linalg.norm(axis)
+    
+    # pick the radius - has meaning in caps and cylinder
+    r = rnd.uniform(R1, R2)
+    
+    # get the z position - defines whether the point will be in caps or cylinder
+    z = rnd.uniform(- np.max([R1, R2]), H + np.max([R1, R2]))
+
+    # phi has same meaning in both sphere caps and cylinder 
+    phi = rnd.uniform(minPhi, maxPhi)
+
+    
+    if z<=0: # In Cap A (bottom)
+    
+        # minTheta only has a meaning in sphero cylinder cap A 
+        theta = rnd.uniform(minTheta, 0)
+    
+        if theta<-np.pi/2:
+            theta = -np.pi/2
+            print("Warning: attempt to place point at meaningless theta in spheroCylinder cap A")
+        
+        p = np.array( [ r,  # radial point in spherical shell
+                        theta, # allowed elevations from minTheta to 0 (between -np.pi/2 and 0)   
+                        phi] ) # azimuthal point on vertical cylinder - same as main cylinder 
+    
+        # convert to spherical polars 
+        x = sphericalPolar2XYZ( p )
+    
+    elif z>0 and z<H: # in cylinder
+        p = np.array( [ r,  # radial point in cylinder
+                        phi,  # azimuthal point on vertical cylinder 
+                        z] ) # point on the vertical axis. 
+    
+        # convert cylindrical xyz coords with cylinder along z axis. 
+        x = cylToXYZ( p )
+        
+    else: # z in Cap B (top)
+        # maxTheta only has a meaning in sphero cylinder cap A 
+        theta = rnd.uniform(0, maxTheta)
+    
+        if theta>np.pi/2:
+            theta = np.pi/2
+            print("Warning: attempt to place point at meaningless theta in spheroCylinder cap B")
+        
+        p = np.array( [ r,  # radial point in spherical shell
+                        theta, # allowed elevations from 0 to maxTheta (between 0 and np.pi/2)   
+                        phi] ) # azimuthal point on vertical cylinder - same as main cylinder 
+    
+        # convert to spherical polars and translate to top of the sphero cylinder 
+        x = sphericalPolar2XYZ( p ) + np.array([0.0, 0.0, H])
+
+    # perform a general translation on that spherocylindrical shell.
+    # first it is rotated about the z axis by Phase. 
+    # then rotated and translated such that what was z axis is coincident with given axis 
+    # and the zero point (initial point A) is translated to actual point A.   
+    newX = translatePointsToNewFrame( [ x ] , # position of point
+                                      np.array([0.0, 0.0, 0.0]), # initial reference point (origin)
+                                      np.array([0.0, 0.0, 1.0]), # initial reference axis (z axis)
+                                      phase, # phase rotation about the axis of the spherocylinder before transformation 
+                                      A,   # final position of cap A center
+                                      axis)# final direction of ref axis
+    
+    return newX[0]
+
+
+def pickRandomPointInMultiSpheroCylinderShell(points, R1, R2):
+
+    # number of segments is one less than the number of points
+    numSegments = len(points) - 1
+    
+    # pick a segment within which to pick a random point    
+    segNum = rnd.randint(1, numSegments)
+    
+    # pick the point in the segnumth segment. Use the defaults for all the other params. 
+    # Don't bother trying to wedge out the concatenated spheroCylinder. Mission for no reason. 
+    return pickRandomPointInSpheroCylinderShell(points[segNum - 1], points[segNum], R1, R2)
+    
+    
+     
+# converts cylindrical coords np.array([rho, theta, z]) 
+# to euclidean np.array([x,y,z])
+def cylToXYZ(p):
+    return np.array([ p[0]*np.cos(p[1]), p[0]*np.sin(p[1]), p[2]]) 
+
+def sphericalPolar2XYZ(pos):
+    # takes [r, theta, phi] numpy array. Computes the x,y,z coords on unit sphere and 
+    # scales it to radius r thus returning x, y, z position of spherical polar input
+    unitSpherePos = polarToUnitSphereXYZ(pos[1], pos[2]) 
+    return pos[0] * unitSpherePos   
+
+def polarToUnitSphereXYZ(theta, phi):
+    # take theta and phi and computes the x, y and z position of the point on unit sphere.
+    # this (and inverse XYZ2SphericalPolar) is the only place where this transformation is defined.
+    # theta is from -pi/2 (south pole) to pi/2 (north pole), measured from xy plane.
+    # phi is from -pi to pi. zero at +ve x axis.  
+    return np.array([np.cos(phi) * np.cos(theta), np.sin(phi) * np.cos(theta), np.sin(theta)]) 
+
+# takes a list of points and converts them to translated, rotated coordinate system defined by the input vectors
+def translatePointsToNewFrame( labXYZVals, labRefPoint, labDirector, labRotation, blockRefPoint, blockDirector):
+    # Returns the input xyzVals rotated to a specific orientation and position.
+    # Three distinct operations are performed on the labXYZCoords in this order: 
+
+    # 1) Rotate the lab coords about the labDirector axis through the labRefPoint by -labRotRadians  
+    # 2) Translate the lab coords so they are relative to block Ref point rather than lab refpoint. 
+    # 3) Rotate the resulting coords about the blockRefPoint so that blockFrame director and 
+    #    labFrame directors placed at the blockRefPoint coincide.
+    # These are the exact reverse of the transformFromBlockFrameToLabFrame function 
+  
+
+    # normalise lab and block directors        
+    labDirectorHat = labDirector/np.linalg.norm(labDirector)
+    blockDirectorHat = blockDirector/np.linalg.norm(blockDirector)
+    
+    # Rotate by "-labRotation" about the labDirector through the lab Reference point.
+    xyzVals = [ rotPAboutAxisAtPoint(pos, labRefPoint, labDirectorHat, -labRotation) for pos in labXYZVals]
+    
+    # The input coords are relative to the labRefPoint, transform them so they are relative to the blockRefPoint.
+    xyzVals= [pos - labRefPoint + blockRefPoint for pos in xyzVals]
+
+    # make sure the two directors are not equal (within a given epsilon)
+    if not isEqual(blockDirectorHat, labDirectorHat, 1e-6):
+        # Compute the rotation axis about which to rotate the labDirector to match the blockDirector
+        rotAxis = np.cross(blockDirectorHat, labDirectorHat)
+        
+        # calculate the angle to rotate the labDirector to match the blockDirector
+        rotAngle = np.arccos(np.dot(labDirectorHat, blockDirectorHat))
+    else:
+        # set the rot axis and rotation amount to a defined position.
+        rotAxis = labDirectorHat
+        rotAngle = 0.0               
+                                
+    # rotate each point in the xyzCoords by the calculated angle about the 
+    # calculated axis through the block Reference point. 
+    return [ rotPAboutAxisAtPoint(pos, blockRefPoint, rotAxis, -rotAngle) for pos in xyzVals]
+    
+def isEqual(p1, p2, epsilon):
+    # checks to see if two vectors are equal. 
+    # Zero vector defined as having a magnitude less than epsilon. 
+    equal = True # assume vectors are equal
+    n = p1 - p2
+    nMag =  np.linalg.norm(n)
+    
+    if ( abs(nMag - 0.0) > epsilon):
+        equal = False
+        
+    return equal
+
+def getCentreOfMass(listOfVectors):
+    sumVal=np.array([0,0,0])
+    for v in listOfVectors:
+        sumVal= sumVal + v
+    com = sumVal/float(len(listOfVectors))
+    return np.around(com, 12) # round the floats to 12th DP. cleans up machine precision noise 
+
+# computes the normalised eigen basis of the inertia tensor  
+def getPrincipalAxes(listOfVectors, computeCOM=False):
+
+    iTensor = np.array([[0,0,0], [0,0,0], [0,0,0]])
+
+    COM = np.array([0.0, 0.0, 0.0])
+    
+    if computeCOM:
+        COM = getCentreOfMass(listOfVectors)
+
+    # ensure it's in the COM frame default is to assume it is and avoid COM computation.
+    for u in listOfVectors:
+        v = u - COM
+        iTensor[0][0] += v[1]**2 + v[2]**2
+        iTensor[1][1] += v[0]**2 + v[2]**2
+        iTensor[2][2] += v[0]**2 + v[1]**2        
+        iTensor[0][1] += v[0]*v[1]
+        iTensor[0][2] += v[0]*v[2]
+        iTensor[1][2] += v[1]*v[2]
+    iTensor[1][0] = iTensor[0][1]
+    iTensor[2][0] = iTensor[0][2]
+    iTensor[2][1] = iTensor[1][2]
+
+    # get the eigen values and vectors of the inertia tensor
+    eig = np.linalg.eig(iTensor)
+
+    # return normalized eigen vectors
+    return  np.array([ a/np.linalg.norm(a) for a in eig[1] ]) 
+
+
+def rotPAboutAxisAtPoint(p, p0, n, angle):
+    # rotates the vector P about an axis n through the point p0 by an angle.
+    if not isEqual(p, p0, 1e-10):
+        r = p - p0
+        nHat = n/np.linalg.norm(n) # ensure we are using a normalised vector
+        try:
+            r_Rot = r*np.cos(angle) + np.cross(nHat, r)*np.sin(angle) + nHat*np.dot(nHat, r)*(1- np.cos(angle))
+            outVec = r_Rot + p0
+        except ValueError:
+            print("valueError")
+            outVec = p
+    else:
+        outVec = p
+    return outVec
+
+def rotPAboutAxis(p, n, angle):
+    nHat = n/np.linalg.norm(n) # ensure we are using a normalised vector
+    return p*np.cos(angle) + np.cross(nHat, p)*np.sin(angle) + nHat*np.dot(nHat, p)*(1- np.cos(angle))  
+    
+
+def generateValidDummyPDB(points, outputFilename, dummyAtomLine):
+    
+    # set up output array
+    atoms = []
+    
+    # convert input string to an atom array
+    atom = parsePdbLine(dummyAtomLine)
+
+    # loop through each point in input array
+    for p in points:
+        # generate a copy of the dummy array
+        newLine = cp.copy(atom)
+        
+        # update copy with new position
+        newLine[7] = p[0]
+        newLine[8] = p[1]
+        newLine[9] = p[2]
+
+        # add newline to the output array
+        atoms.append(newLine)
+    
+    # save the atoms to test file
+    writeAtomsToTextFile(atoms, outputFilename)
+
+def doPickPoints(f, N, maxRejects, minDist, **args):
+        
+    # initialise output array
+    outputSet = []
+    
+    #initialise algorithm variables
+    numRejects = 0
+
+    while len(outputSet)<N and numRejects < maxRejects:
+        # pick a new point (returns a numpy array)
+        x = f(**args)
+
+        # assume it's a good point 
+        acceptPoint = True
+        
+        # if the point is within minDist of any other point then reject it
+        for testPoint in outputSet:
+            if np.linalg.norm(x - testPoint) < minDist:
+                acceptPoint = False
+                break
+
+        # if the point is still good it is not within minDist of any other point
+        # so add it to the list        
+        if acceptPoint:
+            outputSet.append(cp.copy(x))
+            print("point ", len(outputSet), " of ", N, " accepted with ", numRejects, " attempts.")
+            # reset the num
+            numRejects = 0
+        else:
+            numRejects += 1
+            # if this number gets too high then the algorithm bails as it can't find a place to put a new point
+            # NPack in vesiform, deletes points until it can pack the full number.
+
+    # measure final length of set                
+    n = len(outputSet)
+    if n!=N:
+        print("pickPoints Warning: unable to pick ", N, " points. Picked: ", n, " points instead.")
+        
+    return outputSet
+
+def testComputeDistPoints(params):
+    # test compute distance.
+    CylinderLength = 100
+    A = np.array([0.0, 0.0, 0.0])
+    B = np.array([0.0, 0.0, CylinderLength])
+
+    testPoints = [ np.array([0, 0, z]) for z in np.arange(0, CylinderLength, 5) ]
+
+    # pick 1000 points in cylinderical shell 
+    cylPoints = [ pickRandomPointOnCylinder( A, B, 10) for _ in range(1000) ] 
+
+    outInfo = []
+    outNames = []
+    # output distance of each cylPoint from test Point chain indexed by segment index
+    for d in computeDistOfPointsFromTestPoints(cylPoints, testPoints):
+        
+        # output distance information on each CA - already includes sqrt do not add again
+        outInfo.append(str(d[0]) + ", " + str(d[1]) + "\n")
+            
+        # output atom name based on segment. If we run out of names, then start the atom name sequence again. 
+        # Just to color different regions for demonstration purposes. 
+        outNames.append(params['atomNames'][d[0] % len(params['atomNames'])])
+        
+        # dump a text file with the residue distance information
+        writeTextFile(outInfo, "testCyl.dist")
+        
+        # dump an xyz showing which atom belongs to which segment.
+        saveXYZ( cylPoints, "cyl_segments.xyz", outNames )
+
+    # dump the comLine as an xyz
+    testNames = [ params['atomNames'][ i % len(params['atomNames']) ] for i, _ in enumerate(testPoints) ]
+    saveXYZ(testPoints, 'testPoints.xyz', testNames)
+    
+    #dump the points as an XYZ
+    saveXYZ(cylPoints, 'cylPoints.xyz', len(cylPoints) * ["Ca"])
+
+    return
+
+def generateUniformRandomCylinderVaryRad(params):
+
+    numSegs = len(params['varyRadius'])
+    zPoints = [ np.array([0.0, 0.0, z]) for z in np.linspace(0.0, params['cylinderLength'], numSegs + 1) ]
+
+    # set up output template
+    atomTemplate = [1, 'CA', ' ', 'TEST', 'A', 1, 0, 0.0, 0.0, 0.0, 1, 0, 0, 'C', 0.0]
+    outArray = []
+    
+    # pick number of points in cylinder 
+    for _ in range(params['numPoints']):
+        # first pick a random segment which defines a cylinder
+        seg = rnd.randint(0, numSegs - 1)
+        # pick a point in that cylinder
+        point = pickRandomPointInCylindricalShell(zPoints[seg], zPoints[seg+1], params['varyRadius'][seg][0], params['varyRadius'][seg][1] ) 
+        atom = cp.copy(atomTemplate)
+        atom[7] = cp.copy(point[0])
+        atom[8] = cp.copy(point[1])
+        atom[9] = cp.copy(point[2])
+        atom[10] = params['varyRadius'][seg][1] 
+        outArray.append( cp.copy(atom) )
+     
+    return outArray
+
+
+def generateUniformRandomCylinder(params):
+    CylinderLength = params['cylinderLength']
+    A = np.array([0.0, 0.0, 0.0])
+    B = np.array([0.0, 0.0, CylinderLength])
+
+    # set up output template
+    atomTemplate = [1, 'CA', ' ', 'TEST', 'A', 1, 0, 0.0, 0.0, 0.0, 1, 0, 0, 'C', 0.0]
+    outArray = []
+    
+    # pick number of points in cylinder 
+    for i in range(params['numPoints']):
+        point = pickRandomPointInCylindricalShell(A, B, params['innerRadius'], params['outerRadius'] ) 
+        atom = cp.copy(atomTemplate)
+        atom[7] = cp.copy(point[0])
+        atom[8] = cp.copy(point[1])
+        atom[9] = cp.copy(point[2])
+        outArray.append( cp.copy(atom) )
+     
+    return outArray
+
+def surfaceFind(infile, params):
+
+    # debugging test
+    # testComputeDistPoints(params)
+
+    # load atoms
+    try:
+        print("Attempting to over ride input file using config json")
+        infile = params["inputfileroot"] + '.pdb'
+        
+    except KeyError:
+        print("No input file found in json")
+        params['inputfileroot'] = infile[0:-4]
+
+    # building test systems or loading data.        
+    try:
+        if params["uniformCylinder"]==1:
+            print("Generating random uniformly distributed points in a cylindrical shape")
+            atoms = generateUniformRandomCylinder(params)
+        elif params["uniformCylinder"]==2:
+            atoms = generateUniformRandomCylinderVaryRad(params)
+            
+        # sort by z to get a sensible line of COMS
+        atoms = sorted(atoms, key = lambda x: x[9])
+            
+    except KeyError:
+            print("Loading Atoms from ", infile)
+            atoms = readAtoms(infile)
+
+    # if required filter atoms to CAs
+    if params['CAsOnly']:
+        print("Filtering CAs")
+        selectedAtoms = [ atom for atom in atoms if atom[1]=='CA']
+        Points = [ np.array([atom[7], atom[8], atom[9]]) for atom in selectedAtoms ] 
+    else:
+        print("Using every atom")
+        selectedAtoms = [ atom for atom in atoms ]
+        Points = [ np.array([atom[7], atom[8], atom[9]]) for atom in selectedAtoms]
+
+    # move to center of mass
+    print("Moving to Center of Mass")
+    COM = getCentreOfMass(Points)
+    PointsCom = [ v - COM for v in Points]
+
+    # dump the points in the COM frame as an XYZ
+    saveXYZ(PointsCom, params["inputfileroot"] + params['PointsComFilename'], len(PointsCom) * [params['PointsAtomName']])
+
+    
+    # figure out the center of mass curve. Single point if globular.
+    try:
+        if params['globular']: # computes distance of each point from center of mass if array of length 1.
+            ComLine  = np.array([[0.0, 0.0, 0.0]])
+        else:
+            # weird hack so if globular is not present only have rollingCom called in one place. 
+            params['forceKeyError']
+    except KeyError:
+        params['globular'] = 0
+        print("Generating rolling COM line")
+        ComLine = rollingCOM(PointsCom, params['windowSize'], params['decimateComLine'])
+
+        # Compute the length of the tube (sub of vector lengths along comline)    
+        TubeLength = np.sum([ np.linalg.norm(b-a) for a, b in  zip(ComLine[0:-1],ComLine[1:]) ])
+    
+        print("TotalTubeLength: ", TubeLength )
+        print("Scaling end vectors by factor ", params['ScaleEndVectors'])
+        # scale the end vector by a given factor - if it's 1 shouldn't change at all.
+        ComLine[0] = params['ScaleEndVectors'] * (ComLine[0] - ComLine[1]) + ComLine[1]
+        ComLine[-1] = params['ScaleEndVectors'] * (ComLine[-1] - ComLine[-2]) + ComLine[-2]
+    
+    # dump the comLine as an xyz
+    saveXYZ(ComLine, params["inputfileroot"] + params['comLineFilename'], len(ComLine) * [params['comLineAtomName']])
+    
+    # compute a scale factor for the radial distance data 
+    try: 
+        rScale = params['radialScale']
+    except KeyError:
+        rScale = 0.1 # typically the pdbs are in angstroms so distances by 10 to give distances in nm
+    
+    # Scale the Tube length
+    TubeLength = TubeLength * rScale
+    
+    print("Computing Distances of CAs from Com line segments. Distances scaled by ", rScale)
+    # compute the distance of each CA from the COM Line compute distance of each CA from every comline segment and pick the shortest one.
+    distLines = []
+    distData = []
+    atomNames = []
+        
+    # output distance of each atom from segment chain indexed by resnum, resname, atom type, and segment index
+    # if there is only one point testPoints compute distance from the point  
+    for atom, d in zip(selectedAtoms, computeDistOfPointsFromTestPoints(PointsCom, ComLine)):
+        
+        # capture distance from central line data for further analysis.
+        # also make a note of which segment distance is measured from
+        distData.append((atom[3], d[1] * rScale, d[0]))
+        
+        # output distance information on each CA
+        distLines.append(str(atom[3]) + ", " + str(atom[5]) + ", " + str(atom[1]) + ", " + str(d[0]) + ", " + str(d[1] * rScale) + "\n")
+            
+        # output atom name based on segment. If we run out of names, then start the atom name sequence again. 
+        # Just to color different regions for demonstration purposes. 
+        atomNames.append(params['atomNames'][d[0] % len(params['atomNames'])])
+        
+    # dump a text file with the residue distance information
+    writeTextFile(distLines, params["inputfileroot"] + '.dist')
+        
+    # dump an xyz showing which atoms belongs to which segment using centered data.
+    saveXYZ( PointsCom, params["inputfileroot"] + "_segments.xyz", atomNames )
+
+    # If request plot the distances as a straight graph against residue number
+    if params['plotDistances']:
+        # create a figure
+        fig = plt.figure()
+        plt.plot([ d[1] for d in distData], 'b+')
+        plt.title("Distance of residues from COM Line")
+        plt.xlabel("Residue Number")
+        plt.ylabel("Distance (nm)")
+        plt.savefig(params["inputfileroot"] + '_distances.png', dpi=600)
+        plt.show()
+
+    
+    #print("Smoothing Distance data")
+    #if params['smoothSegInfo']:
+    #    smoothDist = minEnergySmooth([d[1] for d in distData[0::5]], params)
+    #    fig = plt.figure()
+    #    plt.plot([ d[1] for d in distData], 'b+')
+    #    plt.plot([ 5 * d for d in range(0, len(smoothDist))], smoothDist, 'rx')
+    #    plt.title("Distance of residues from COM Line")
+    #    plt.xlabel("Residue Number")
+    #    plt.ylabel("Distance (nm)")
+    #    plt.savefig(params["inputfileroot"] + '_smoothDistances.png', dpi=600)
+    #    plt.show()
+
+    # using kernel density estimate to find the edge of the tube at each radius
+    if params['scaleRadiusByTubeRadius']=='kde':
+        print("Using Kernel Density Estimate to find tube radius")
+        tubeOuterRadius, tubeInnerRadius = kde([d[1] for d in distData], params) 
+
+    print("Analysing mean and max radius by segment")
+    # compute the max and mean radius of each segment.
+    segInfo = analyseRadiusBySegment(distData, params)
+    
+    if params['smoothSegInfo']:
+        segInfo = smoothSegInfo(segInfo, params)
+    
+    # dump the segment info to file
+    writeTextFile([ str(i) + ", " + str(sVals['mean']) + ", " + str(sVals['max']) + "\n" for i, sVals in segInfo.items()],
+                  params["inputfileroot"] + '.segInfo')
+    
+    # If requested plot the segment means and maxes as graph against residue number
+    if params['plotSegments']:
+        # create a figure
+        fig = plt.figure()
+        plt.plot([ d[1] for d in distData], 'b+')
+        plt.plot([ segInfo[d[2]]['mean'] for d in distData ], 'gx' )
+        plt.plot([ segInfo[d[2]]['max'] for d in distData ], 'y^' )
+        if params['scaleRadiusByTubeRadius']=='kde':
+            plt.plot([ oRad for oRad in tubeOuterRadius ], 'ro' )
+            plt.plot([ iRad for iRad in tubeInnerRadius ], 'ms' )
+        plt.title("Distance of residues from COM Line with Segment means and maxes")
+        plt.xlabel("Residue Number")
+        plt.ylabel("Distance (nm)")
+        plt.savefig(params["inputfileroot"] + '_SegDistances.png', dpi=600)
+        plt.show()
+
+    # Scale distances by segment if requested using the segment info in distData
+    try:
+        if params['scaleRadiusByTubeRadius']=='mean':
+            distDataScaled = [ (d[0], d[1]/segInfo[d[2]]['mean'], d[2]) for d in distData ]
+        elif params['scaleRadiusByTubeRadius']=='max':
+            distDataScaled = [ (d[0], d[1]/segInfo[d[2]]['max'], d[2]) for d in distData ]
+        elif params['scaleRadiusByTubeRadius']=='kde':
+            distDataScaled = [ (d[0], d[1]/oRad, d[2]) for d,oRad in zip(distData, tubeOuterRadius) ]
+    except KeyError:
+        distDataScaled = distData 
+
+    try:    
+        # if we are using the test cylinder then create a sanity check based on the actual radius
+        if params['uniformCylinder']==1:
+            distDataScaledActual = [ (d[0], d[1]/(rScale * params['outerRadius']), d[2]) for d in distData ]
+        
+        if params['uniformCylinder']==2:
+            distDataScaledActual = [ (d[0], d[1]/(rScale * atom[10]), d[2]) for d,atom in zip(distData, atoms) ]
+    except KeyError:
+        pass 
+    
+    # dump a text file with the residue distance information scaled by segment
+    writeTextFile([str(d[1]) for d in distDataScaled], params["inputfileroot"] + '.SegScaledDist')
+    
+    # If requested plot the scaled distances as a straight graph against residue number
+    if params['plotDistances']:
+        # create a figure
+        fig = plt.figure()
+        plt.plot([ d[1] for d in distDataScaled], 'b+')
+        try:
+            if not params['uniformCylinder']==0:
+                plt.plot([ d[1] for d in distDataScaledActual], 'rx')
+        except KeyError:
+            pass
+        plt.title("Segment Scaled Distance of residues from COM Line")
+        plt.xlabel("Residue Number")
+        plt.ylabel("Distance (Tube Radius Units)")
+        plt.savefig(params["inputfileroot"] + '_TubeScaledDistances.png', dpi=600)
+        plt.show()
+
+    # Begin residue based analysis
+    print("Computing Unique residue distribution")
+
+    # generate a list of residues names in order
+    resListFull = [ atom[3] for atom in selectedAtoms ] 
+
+    # if requested plot the histogram of all the residues in the sequence.
+    if params['reqFullResHistogram']:
+        # create a figure
+        fig = plt.figure()
+        labels, counts = np.unique(resListFull, return_counts=True)
+        plt.bar(labels, counts, align='center')
+        for i, count in enumerate(counts):
+            plt.text(i, count + params['textLabelVOffset'], count, ha = 'center')
+        plt.gca().set_xticks(labels)
+        plt.title("Residue Distribution")
+        plt.xlabel("Residues")
+        plt.ylabel("Frequency")
+        plt.savefig(params["inputfileroot"] + '_ResFreq.png', dpi=600)
+        plt.show()
+
+    print("Computing Radial Density Profile by Residue Type")
+    
+    # set up the figure
+    fig = plt.figure()
+    
+    max_l_array = plotRadialDensityByResidue(fig, distDataScaled, TubeLength, params)
+
+    # dump a text file with the max residue distance information
+    writeTextFile(max_l_array, params["inputfileroot"] + 'mean_max_perResType.info')
+
+    # over plot on same graph as fig
+    try:
+        if not params['uniformCylinder']==0:
+            params['resOfInterest']['TEST']['linestyle']='--'
+            params['resOfInterest']['TEST']['marker']='o'
+            params['resOfInterest']['TEST']['linecolor']='#0066ec'
+            params['resOfInterest']['TEST']['markeredgecolor']='#0066ec'
+            plotRadialDensityByResidue(fig, distDataScaledActual, TubeLength, params)
+            _, xmax = fig.gca().get_xlim()
+            plt.xlim([0.0, xmax])
+    except KeyError:
+        pass
+
+    plt.savefig(params['inputfileroot'] + '_radial_distribution.png', dpi=600)
+    plt.show()
+
+def moving_average(a, n=3) :
+    ret = np.cumsum(a, dtype=float)
+    ret[n:] = ret[n:] - ret[:-n]
+    return ret[n - 1:] / n
+
+def smoothSegInfo(segInfo, params):
+    id = [ i for i in segInfo ]
+    means = [ segInfo[i]['mean'] for i in segInfo ]
+    maxes = [ segInfo[i]['max'] for i in segInfo ]
+    
+    nxs = minEnergySmooth(maxes, params)
+    nms = minEnergySmooth(means, params)
+    
+    #kernel_size = params['smoothKernelSize']
+    #kernel = np.ones(kernel_size) / kernel_size
+    #mean_convolved = np.convolve(means, kernel, mode='valid') 
+    #max_convolved = np.convolve(maxes, kernel, mode='valid')
+    
+    #fig = plt.figure()
+    #plt.plot(means,'b+-')
+    #plt.plot(maxes,'gx')
+    #plt.plot(mean_convolved, 'r+')
+    #plt.plot(max_convolved, 'ks')
+    #plt.plot(nms, 'y^-')
+    #plt.plot(nxs, 'mo')
+    #plt.show()
+    
+    segInfoRet = {}
+    for i,m,x in zip(id, nms, nxs):
+        segInfoRet[i] = {'mean':m, 'max':x} 
+    
+    return segInfoRet
+
+def minEnergySmooth(surface, params):
+
+    h1 = []
+    h2 = []
+    e = np.zeros((300, len(surface)))
+    hTest = np.linspace(50, 0.2, num=300)
+    
+    for x, s in enumerate(surface):
+        print("point: ", x, " of ", len(surface))
+        for i, hTestVal in enumerate(hTest):
+            e[i,x] = energy(s + hTestVal, x, surface, params)
+        h1min = s + hTest[np.argmin(e[:,x])]
+        h1.append(h1min)
+        res = minimize(energy, h1min, args=(x, surface, params) )
+        h2.append( res.x - params['sigma'] ) 
+
+    return h2
+
+# given a surface profile compute the potential energy experienced at point x, h by a shape defined in params  
+def energy(h, x, surface, params):
+    pot = 0
+    for p, s in enumerate(surface):
+        d = np.sqrt((x - p)*(x - p) + (h - s)*(h - s))
+        if d < 3 * params['sigma']:
+            pot += 4 * params['epsilon'] * (np.power(params['sigma']/d, 12) - np.power(params['sigma']/d, 6))  
+
+    return pot
+    
+def plotRadialDensityByResidue(fig, distData, tubeLength, params):
+    
+    #set the current figure
+    plt.figure(fig.number)
+    
+    d_all = [d[1] for d in distData]
+    
+    # compute the histogram for the whole distribution using autobins. Use these bins for all the sub populations. 
+    all_hist, all_bin_edges = np.histogram(d_all, bins='auto', density=False)
+
+    # compute the centers of the bins for plotting purposes. These are not used for anything else except plotting.  
+    bin_centers = [ (b1+b2)/2 for b1, b2 in zip(all_bin_edges[0:-1], all_bin_edges[1:])]
+        
+    # compute the circular area associated with each bin and multiply by the length of the tube to get correct volume density 
+    # We have computed the total number of residues a distance from the center. 
+    # We would expect this to be higher for a larger radius as you can get more residues in, so must correct for this.     
+    if params['globular']:
+        # in a spherical case (globular) each bin is associated with a spherical shell of volume outer sphere - inner sphere 
+        binVolumes = np.array([  ( 4.0 / 3.0 ) * np.pi * (b2 * b2 * b2 - b1 * b1 * b1) for b1, b2, in zip(all_bin_edges[0:-1], all_bin_edges[1:])])
+    else:
+    
+        binVolumes = tubeLength * np.array([ np.pi * (b2 * b2 - b1 * b1) for b1, b2, in zip(all_bin_edges[0:-1], all_bin_edges[1:])])
+
+    
+    # set up array to hold some output data
+    max_l_array = ["Res, max_dist, mean_dist\n"]
+
+    # loop through the requested residues of interest and filter out sub populations
+    for res, style in params['resOfInterest'].items():
+        
+        # if a style for all is requested then plot it out
+        if res=='ALL':
+            # use the previously calculated values for all 
+            hist = all_hist
+            numResidues = len(d_all)
+            max_l = res + ", " + str(np.max(d_all)) + ", " + str(np.mean(d_all)) + '\n'
+        else:
+            # get the distance for current residue
+            ds = [ d[1] for d in distData if d[0]==res ]
+            
+            # compute histogram for current residue using the same bins as we got for the whole distribution.
+            hist, _ = np.histogram(ds, bins=all_bin_edges)
+            
+            # count the number of residues in the sub set
+            numResidues = len(ds)
+            
+            # generate an information print out string
+            max_l = res + ", " + str(np.max(ds)) + ", " + str(np.mean(ds)) + '\n'
+        
+        # print out print statement for current sub set
+        print(max_l)
+        max_l_array.append(max_l)
+        
+        # scale the residue count based on the area or volume associated with bin to get the actual radial density profile. 
+        hist = [ h/V for h, V in zip(hist, binVolumes) ]
+
+        # choose whether to normalize the distribution, showing the percentage of each population in various bins        
+        if params['normalise']:
+            hist = [ h/numResidues for h in hist]
+        
+        if res=='TEST': 
+            if style['linestyle']=='--':
+                label = 'Known Tube Radius'
+            else:
+                label = 'Measured Tube Radius'
+        else:
+            label=res
+        # plot the current histogram out with the current style information
+        plt.plot( bin_centers, hist, label=label, 
+                  markeredgewidth=style['markeredgewidth'],
+                  markeredgecolor=style['markeredgecolor'],
+                  markerfacecolor=style['markerfacecolor'],
+                  marker=style['marker'],
+                  linestyle=style['linestyle'],
+                  color=style['linecolor'],
+                  zorder=style['zorder'] )
+ 
+    try:
+        plt.legend(loc=params['legLocn'])
+    except KeyError:
+        plt.legend(loc='upper right')
+    xlabel = ''       
+    if params['globular']:
+        xlabel = 'Distance from COM'
+    else:
+        xlabel = 'Distance from axis'
+
+    if params['scaleRadiusByTubeRadius']=='norm':
+        plt.xlabel(xlabel + " (nm)")
+    else:
+        plt.xlabel(xlabel + " (tube radius units)")
+
+    if params['normalise']:        
+        plt.ylabel('Radial Density (fraction of class/unit volume)')
+    else:
+        plt.ylabel('Radial Density (residue count/unit volume)')
+        
+    
+    return max_l_array
+
+# compute the mean and max d of every segment 
+def analyseRadiusBySegment(distData, params):
+    segInfo = {}
+    
+    # compute the mean and max for each segment
+    # sometimes a segment is never the closest segment and so segments don't necessarily appear here - hence the dictionary approach
+    for segment in sorted( set( [ d[2] for d in distData ] ) ):
+        dList = [ d[1] for d in distData if d[2]==segment ]
+        segInfo[segment] = {'mean': np.mean( dList ), 'max': np.max( dList )}
+        
+    return segInfo  
+
+def kde(data, params):
+
+    numPoints = len(data)
+    xPoints = np.linspace(0, numPoints - 1, num=numPoints)
+    
+    xmin, xmax = 0, numPoints 
+    ymin, ymax = 0, 1.1 * np.max(data)
+
+    # Peform the kernel density estimate
+    xx, yy = np.mgrid[xmin:xmax:numPoints*1j, ymin:ymax:numPoints*1j]
+    positions = np.vstack([xx.ravel(), yy.ravel()])
+    values = np.vstack([xPoints, data])
+    kernel = st.gaussian_kde(values)
+    f = np.reshape(kernel(positions).T, xx.shape)
+
+    maxF = np.max(f)
+    threshold = params['TubeRadiusThreshold'] * maxF
+
+    print("KDE found. Max val: ", maxF, "Now interpolating points at threshold: ", threshold)
+   
+    # interpolating yPoints
+    yIndices = findYPoints(f, xPoints, threshold)
+    radVals = [ [ y * (ymax - ymin)/numPoints for y in ySubList] for ySubList in yIndices] 
+    print(radVals)
+    radVals1 = [ radValPair[0] for radValPair in radVals]
+    radVals2 = [ radValPair[1] for radValPair in radVals]
+
+    fig=plt.figure()
+    ax = fig.gca()
+    ax.set_xlim(xmin, xmax)
+    ax.set_ylim(ymin, ymax)
+    # Contourf plot
+    cfset = ax.contourf(xx, yy, f, cmap='Blues')
+    ## Or kernel density estimate plot instead of the contourf plot
+    #ax.imshow(np.rot90(f), cmap='Blues', extent=[xmin, xmax, ymin, ymax])
+    # Contour plot
+    cset = ax.contour(xx, yy, f, colors='k')
+    # Label plot
+    ax.clabel(cset, inline=1, fontsize=10)
+    ax.set_xlabel('Y1')
+    ax.set_ylabel('Y0')
+    ax.autoscale(False)
+    ax.scatter(xPoints, radVals1, zorder=1)
+    ax.scatter(xPoints, radVals2, zorder=1)
+    plt.savefig(params['inputfileroot'] + '_kde_TubeRadius.png', dpi=600)
+    plt.show()
+    
+    return radVals2, radVals1
+
+def findYPoints(f, xPoints, threshold):
+    
+    y = []
+    for x in xPoints:
+        g = np.array([ v - threshold for v in f[int(x),:] ])
+        yIndexPoints = np.where(g[:-1]*g[1:]<0)[0] + 1
+    
+        # find where the linear line crosses zero by interpolation
+        # compute the decimal index for each such point where it happens.
+        y.append([ yVal - 1 + np.abs(g[yVal - 1])/(np.abs(g[yVal]) + np.abs(g[yVal-1])) for yVal in yIndexPoints]) 
+    
+    return y
+
+# takes a list of points and then computes the Centre of mass of
+# each subset of windowSize points. Returns a list of len(positions) - windowSize
+# vectors. 
+def rollingCOM(positions, windowSize, step):
+    return [ getCentreOfMass(positions[i:i+windowSize]) for i in range(0, len(positions) - windowSize + 1, step) ]
+    
+def rollingBallOnAPlane(atoms, nHat, p):
+    
+    points = ProjectPointsOntoPlane(atoms, nHat, p)
+
+    x = [ r[0] for r in points]
+    y = [ r[1] for r in points]
+    z = [ r[2] for r in points]
+   
+    # for debug purposes
+    x1 = [ r[0] for r in atoms]
+    y1 = [ r[1] for r in atoms]
+    z1 = [ r[2] for r in atoms]
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.scatter(x,y,z)
+    # ax.scatter(x1,y1,z1)
+    plt.show()
+
+
+   
+    
+    #heightArray = createImageFromCoords(coords,heights)
+    
+    #retainedImagePoints = rollingBallOnImage(heightArray)
+    
+    #indexPoints = convertImagePointsToIndexPoints(retainedImagePoints)
+    
+     
+    # return indexPoints
+    
+    
+def ProjectPointsOntoPlane(atoms, nHat, P):
+    # Given a plane with normal nHat going through a point P determine the distance of the points in the atom list to the plane
+    # return as a list of np vectors  Automatically accounts for +ve and negative distance (i.e. on side with positive direction of n Hat, or other side) 
+    zs = [ np.dot(nHat, r - P) for r in atoms ]
+        
+    bs = [ r - P - z * nHat for r, z in zip(atoms, zs)]
+
+    # return an array which is the position of the point in coord system with origin at P and z axis nHat.     
+    return [ np.array([b[0], b[1], z]) for b, z in zip(bs, zs)  ]
+    
+    
+    
+
+def spherowrap(infile, configFile):
+    
+    params = loadJson(configFile)
+    
+    if int(params['dumpTrainingSet']):
+        dumpTrainingSet(params)
+    
+    # read after dumping training set in case training set is intended target
+    atoms = readAtoms(infile)
+    
+    # move atoms to COM frame 
+    # xyzCOM = atomsToCOM(atoms)
+    
+    # temporarily disable COM transform.
+    xyzCOM = atoms
+    
+    # get the xyz positions of the atoms
+    xyz = [ np.array([float(atom[7]), float(atom[8]), float(atom[9])]) for atom in xyzCOM ]
+
+    # initialise the initPoints List
+    initPointsList = []
+    initPointsFilenames=[]
+    initPointA = None
+    initPointB = None
+    
+    # loop through the initpoints instructions.
+    # if it's a file then load the points into the list
+    # if its an int then generate a straight line between points furthest apart 
+    for initPointIndex, initPointInstruction in enumerate(params['initPoints']):
+
+        # attempt to treat the instruction as a string ending in xyz. 
+        # if it checks out then load the file. 
+        try:            
+            if initPointInstruction[-4:]==".xyz": 
+                initPointsList.append( loadXYZ(initPointInstruction)[1] )
+                initPointsFilenames.append(initPointInstruction)
+
+        except TypeError:
+            # if there's a type error then instruction is likely not a string. Assume it's an int and carry on!
+
+            # if we haven't already done it then find the two points furthest apart
+            try:
+                if len(initPointA)==3:
+                    print("distances already computed")
+            except TypeError:
+                print("Computing distance between all points.")
+                # find longest distance between two atoms in structures
+                initPointA, initPointB = maxDistInList(xyz)
+
+            # generate a line of initPointInstruction points between the two points furthest apart              
+            initPointsList.append( genLinePoints(int(initPointInstruction), initPointA, initPointB) )
+            initPointsFilenames.append("initPoints_" + str(initPointIndex) + "_" + str(initPointInstruction) + ".xyz")
+    
+    # perform a hopping process for each set of initPoints
+    for initPointIndex, initPointsFilename, initPoints in zip(range(len(initPointsList)), initPointsFilenames, initPointsList):
+        
+        print( "Number of points: ", len( initPoints ) )
+        
+        # finds a set of positions of N points that minimizes the distance from the test set to the segments between the points
+        spheroPoints = mybasinhopping(  computeTotalDistOfPointsFromTestPoints, 
+                                        initPoints,
+                                        xyz, 
+                                        params, 
+                                        initPointsFilename=initPointsFilename,
+                                        minListFilename=infile[0:-4] + "_" + str(initPointIndex)+"_minList.xyz")
+    
+        distLines = []
+        atomNames = []
+        # output distance of each atom from segment chain indexed by resnum, resname, atom type, and segment index
+        for atom, d in zip(atoms, computeDistOfPointsFromTestPoints(xyz, [ sPoint[1] for sPoint in spheroPoints])):
+            # output distance information on each CA
+            distLines.append(str(atom[3]) + ", " + str(atom[5]) + ", " + str(atom[1]) + ", " + str(d[0]) + ", " + str(d[1]) + "\n")
+            
+            # output atom name based on segment
+            atomNames.append(params['atomNames'][d[0]])
+        
+        writeTextFile(distLines, infile[0:-4] + "_" + str(initPointIndex) + ".dist")
+        saveXYZSpheroPoints( ( spheroPoints[0], [ np.array([atom[7], atom[8], atom[9]]) for atom in atoms]), 
+                   infile[0:-4] + "_" + str(initPointIndex) + ".xyz", 
+                   atomNames )
+    
+# returns the two points that are furthest away from each other in an input list of np arrays.
+def maxDistInList(listofpoints):
+    dist_array = np.array([ [p, q, np.linalg.norm(listofpoints[p] - listofpoints[q]) ] for p, q in iter.combinations(range(len(listofpoints)), 2) ]) 
+    maxIndices = tuple(dist_array[ np.argmax( dist_array[:,2] )][0:2])   
+    return listofpoints[int(maxIndices[0])], listofpoints[int(maxIndices[1])] 
+
+
+# generate a list of N evenly space points between pointA and pointB with pointA and pointB being the first and last points    
+def genLinePoints(N, pointA, pointB):
+    axis = pointB - pointA
+    axisNorm = np.linalg.norm( axis )
+    axisHat = axis/axisNorm
+    return [ pointA + d * axisHat for d in np.linspace(0, axisNorm, num=N) ]
+    
+
+def saveXYZSpheroPoints(spheroPoints, filename, atomNames, append=False):
+    saveXYZ(spheroPoints[1], filename, atomNames, append=append, comment="Score:" + str(spheroPoints[0]) + "\n")
+    
+def saveXYZ(points, filename, atomNames, append=False, comment="comment\n"):
+    lines = [str(len(points)) + "\n", comment]
+    for point, atomName in zip(points, atomNames):
+        lines.append( atomName + " " + str(point[0]) + " " + str(point[1]) + " " + str(point[2]) + "\n")
+    writeTextFile(lines, filename, append=append)
+
+
+def loadXYZ(filename):
+    atomLines = readTextFile(filename)
+    
+    # get the length of the xyz file
+    numAtoms = int(atomLines[0])
+        
+    # parse each line in the xyz file into separate values 
+    xyzListAll = [ line.split() for line in atomLines[2:]]
+        
+    # extract the names and xyz positions as floats into separate arrays
+    atomNameList  = [ xyzEntry[0] for xyzEntry in xyzListAll]
+    
+    xyzList  = [ np.array([float(xyzEntry[1]), float(xyzEntry[2]), float(xyzEntry[3])])  for xyzEntry in xyzListAll]
+
+    # check that the number of lines read in match the stated length in the file                 
+    if (len(xyzList) != numAtoms):
+            print("Warning: Num atoms read doesn't match num atoms specified in file")
+
+    return atomNameList, xyzList
+
+# adds a random vector whose norm is no bigger than stepsize to each vector in X
+# 1/sqrt 3 scales vector to make sure largest possible vector is of magnitude stepsize.
+def takeStep(X, stepsize):
+    newX = np.zeros(np.shape(X))
+    for i, x in enumerate(X):
+        newX[i]= cp.copy(x + (1.0/np.sqrt(3)) * np.array([ rnd.uniform(-stepsize, stepsize),
+                                                        rnd.uniform(-stepsize, stepsize),
+                                                        rnd.uniform(-stepsize, stepsize)]) )
+    return newX
+        
+def mybasinhopping(f, x0, listOfPoints, params, initPointsFilename=None, minListFilename=None):
+    
+    # initialise parameters
+    f0 = f(x0, listOfPoints, float(params['springWeight']))
+    
+    # if the initpoints filename is specified save the initial points with the current score. 
+    if initPointsFilename:
+        saveXYZSpheroPoints((f0, x0), initPointsFilename, atomNames=len(x0)*['C'])
+    
+    fCurr = f0
+    xCurr = cp.copy(x0)
+    T = params['T']
+    springWeight = float(params['springWeight'])
+    epsilon = float(params['sameMinEpsilon'])
+    stepSize = float(params['stepSize'])
+    numMin = int(params['numMinToSave'])
+ 
+    # set up the minList
+    minList = numMin * [(f0, x0)]
+    
+    # set up the main loop
+    numStepsLeft = int(params['numSteps'])
+    while numStepsLeft>0:
+        
+        # take a step
+        xNew = takeStep(xCurr, stepSize)
+        
+        # compute new value at new place
+        fNew = f(xNew, listOfPoints, springWeight)
+
+        # if new value is lower than the current value accept it
+        if fNew<fCurr:
+            fCurr = fNew
+            xCurr = cp.copy(xNew)
+            print("New minimum accepted with value:", fNew, " at step: ", int(params['numSteps']) - numStepsLeft)
+        # if the new value is higher than accept with probability based on difference with curr val
+        elif np.exp( -(fNew - fCurr) / T ) > np.random.uniform(low=0.0, high=1.0, size=1):
+            fCurr = fNew
+            xCurr = cp.copy(xNew)
+            print("New minimum accepted with value:", fNew, " at step: ", int(params['numSteps']) - numStepsLeft)
+             
+        # if the curr value is sufficiently smaller than the last minimum in the minimum list then add it to the list, rank and chop
+        if fCurr < (minList[-1][0] - epsilon):
+            minList.append( (fCurr, xCurr) )
+            minList = sorted(minList, key=lambda x: x[0])
+            minList = minList[0:numMin]
+        
+        #decrement the number of steps
+        numStepsLeft -= 1
+
+    if minListFilename:
+        # output the data
+        for i, minEntry in enumerate(minList):
+            if i==0:
+                saveXYZSpheroPoints(minEntry, minListFilename, atomNames=len(minEntry[1])*['O'], append=False)
+            else:
+                saveXYZSpheroPoints(minEntry, minListFilename, atomNames=len(minEntry[1])*['O'], append=True)
+
+    return minList[0]
+
+# flattens a list of M N-vectors into a 1 x N*M list of ordinates [x1, y1, z1, ...., xn, yn, zn, ...]  
+def vecsToList(listOfVecs):
+    return [ d for p in listOfVecs for d in p]
+
+# converts a list of N ordinates into a list of vectors of length N
+def listToVecs(ordinates, N):
+    return ordinates.reshape(int(len(ordinates)/N), N)
+
+# for use in fitting the axes to a cluster. Does not compute sqrt of square distance to speed things up a little.
+# includes a term to minimize distance between points
+def computeTotalDistOfPointsFromTestPoints(coordinates, dataPoints, springWeight):
+    sum = 0
+    
+    # minimize distance from points to line segment. - Has the effect of extending lines beyond ends of cylinder 
+    # sum the perpendicular distance from each point to each of the line segments.
+    # the smallest such distance for each point is added to the over all sum 
+    for p in dataPoints:
+        distMin = np.inf
+        for segment in zip(coordinates[0:-1], coordinates[1:]):
+            distNew = closestApproachTwoLineSegmentsSquared(p, p, segment[0], segment[1]) 
+            if distNew < distMin:
+                distMin = distNew 
+        sum += distMin
+        
+    # also minimize the length of the overall chain of segments.
+    for segment in zip(coordinates[0:-1], coordinates[1:]):
+        sum += springWeight * np.linalg.norm(segment[1]-segment[0])
+    
+    return sum 
+
+# For each point in a list, computes the shortest distance to each line segment defined by a second list of test points
+# For each point the distance to the closest segment is returned in a list. 
+# If there is only one point in the test list the distance to that point from each point is returned in a list.    
+def computeDistOfPointsFromTestPoints(points, testPoints):
+    dOut = []
+    for p in points:
+        d=np.zeros(len(testPoints)-1)
+        
+        if len(testPoints)>1:
+            for i, segment in enumerate(zip(testPoints[0:-1], testPoints[1:])):
+                d[i] = np.sqrt(closestApproachTwoLineSegmentsSquared(p, p, segment[0], segment[1]))
+        else:
+            d = [ np.linalg.norm(p - testPoints[0]) ] 
+
+        iMin = np.argmin(d)
+        dOut.append((iMin, d[iMin]))
+        
+    return dOut
+    
+    
 def generateRigidBodyInput(infile, Cis_Trans_File):
 
     # load the pdb file and dump as a coordsinirigid file
@@ -933,18 +2482,18 @@ def TNB2XYZ(TNBframe, posTNB):
     # return the XYZ coords of posTNB 
     return np.inner(np.transpose(TNBframe), posTNB)
 
-def sphericalPolar2XYZ(pos):
+def AsphericalPolar2XYZ(pos):
     # takes [r, theta, phi] numpy array. Computes the x,y,z coords on unit sphere and 
     # scales it to radius r thus returning x, y, z position of spherical polar input
     unitSpherePos = polarToUnitSphereXYZ(pos[1], pos[2]) 
     return pos[0] * unitSpherePos   
 
-def polarToUnitSphereXYZ(theta, phi):
+def ApolarToUnitSphereXYZ(theta, phi):
     # take theta and phi and computes the x, y and z position of the point on unit sphere.
     # this (and inverse XYZ2SphericalPolar) is the only place where this transformation is defined.
     # theta is from -pi/2 (south pole) to pi/2 (north pole), measured from xy plane.
     # phi is from -pi to pi. zero at +ve x axis.  
-    return np.array([np.cos(phi) * np.cos(theta), np.sin(phi) * np.cos(theta), np.sin(theta)]) 
+    return np.array([np.cos(phi) * np.cos(theta), np.sin(phi) * np.cos(theta), np.sin(theta)])
 
 def constructTNBFrame(p1, p2, p3):
     # given three arbitrary points defined in the lab XYZ frame, this function constructs 
@@ -1672,7 +3221,23 @@ def residueInfo(infile, outfile):
     
     return
 
-
+def concatenatePdbs(infile, params):
+    
+    writeTextFile(['COMMENT\n'], params['outputFile'])
+    
+    # get the PDBS as a glob
+    for f in glob.glob( os.path.join( params['directory'], '*.pdb') ):
+        print("Processing file: ", f)
+        writeTextFile(['MODEL\n'], params['outputFile'], append=True)
+        atoms = readAllAtoms(f)
+        lines = []
+        for atom in atoms:
+            lines.append(pdbLineFromAtom(atom)[0:-1])
+        
+        writeTextFile(lines, params['outputFile'], append=True)
+        writeTextFile(['TER\n'], params['outputFile'], append=True)
+        writeTextFile(['ENDMDL\n'], params['outputFile'], append=True)
+        
 def ramachandrans(infile, configFile):
     params = loadJson(configFile)
     
@@ -1741,7 +3306,8 @@ def ramachandrans(infile, configFile):
                                         markeredgecolor=style['markeredgecolor'],
                                         marker=style['marker'], 
                                         markersize=style['markersize'],
-                                        linestyle=style['linestyle'])
+                                        linestyle=style['linestyle'],
+                                        zorder=style['zorder'])
                 
                 
                     if len(params['plotDetails'])>1:
@@ -1765,7 +3331,7 @@ def ramachandrans(infile, configFile):
         plt.xlim([params['phiMin'], params['phiMax']])
         plt.ylim([params['psiMin'], params['psiMax']])
 
-    plt.savefig(params['pngName'])
+    plt.savefig(params['pngName'], dpi=600)
     plt.show()
 
     
@@ -2266,10 +3832,13 @@ def readTextFile(filename):
     vst.close()
     return lines
 
-def writeTextFile(lines, filename):
+def writeTextFile(lines, filename, append=False):
     #write line data to file
     try:
-        vst = open(filename, 'w')
+        if append:
+            vst = open(filename, 'a')
+        else:
+            vst = open(filename, 'w')
     except:
         raise Exception( "Unable to open output file: " + filename )
     for line in lines:
@@ -2950,7 +4519,10 @@ def centrePDB(inpFile):
      
     replacePdbAtoms(inpFile, atomsXYZ, inpFile[0:-4] + '_com.pdb', pdb=pdb, atoms=atoms)
      
-    
+def centrePDB2(inpFile):
+    com, atomsCOM = atomsToCOM(readAtoms(inpFile))
+    print("COM:", com)
+    writeAtomsToTextFile(atomsCOM, inpFile[0:-4] + "_com.pdb")
 
 #this is hacked to do what I wanted it to do for one occasion and is not generalised
 def symmetrize(forcefield, topologyPreSym, topology, pathname='~/svn/SCRIPTS/AMBER/symmetrise_prmtop/perm-prmtop.ff03'):
@@ -3503,14 +5075,22 @@ def readSequence(infile, mode, outfile, width=80):
     atoms=readAtoms(infile)
     residues=findResidues(atoms)
     
+    internalReadSequence(residues, mode, outfile=outfile, width=width)
+
+# returns a string or list of strings containing the sequence of the residues in the list in the mode specified in mode. 
+# Dumps to specific file if requested. 
+def internalReadSequence(residues, mode, outfile=None, width=80):
+    
     #mode 1 numbered with three letter codes on separate lines
     if mode==1:
         print("mode: 1 selected")
-        writeTextFile([str(res[0])+' '+str(res[1])+'\n' for res in residues],outfile)
+        l = [str(res[0])+' '+str(res[1])+'\n' for res in residues]
+        
     #mode 1 unumbered with three letter codes on separate lines - suitable for a modify sequence command
     if mode==2:
         print("mode: 2 selected")
-        writeTextFile([str(res[1])+'\n' for res in residues],outfile)
+        l = [str(res[1])+'\n' for res in residues]
+    
     #mode 3 string of first letters only
     if mode==3:
         print("mode: 3 selected")
@@ -3518,13 +5098,12 @@ def readSequence(infile, mode, outfile, width=80):
         for res in residues:
             l += getSingleLetterFromThreeLetterAACode(res[1])
         l+='\n'
-        writeTextFile(l,outfile)
     
     # 3 letter sequence as a single line
     if mode==4:
         print("mode: 4 selected")
-        writeTextFile([str(res[1])+' ' for res in residues],outfile)
-    
+        l = [str(res[1])+' ' for res in residues]
+        
     if mode==5:
         print("mode: 5 selected (fixed width format)")
         l=''
@@ -3537,9 +5116,11 @@ def readSequence(infile, mode, outfile, width=80):
                 l += '\n'
         if not count==width:
             l += '\n'
-        writeTextFile(l,outfile)
         
-    return
+    if outfile:        
+        writeTextFile(l, outfile)
+        
+    return l
 
 def getSingleLetterFromThreeLetterAACode(res):
     # copy first letter in cases where that works
@@ -3875,6 +5456,90 @@ def puckerGroupSpec(infile, resfile, OHFlag, scaleFac, rotProb, outfile):
     fO.close()
     return
 
+# boosted from utilieis cartesian
+def clamp(val, valMin, valMax):
+    retVal = val
+    if val < valMin:
+        retVal = valMin
+    if val> valMax:
+        retVal = valMax
+    return retVal
+
+
+# boosted from utilities cartesian
+def closestApproachTwoLineSegmentsSquared(p1, q1, p2, q2, returnVec=False):
+    # finds the square of the distance between the closest points of 
+    # approach on two line segments between p1 and q1 and p2 and q2.
+    # Works by computing s and t - the displacement parameters along the 
+    # line's equations:
+    # r(s) = p1 + s * (q1 - p1)
+    # r(t) = p2 + t * (q2 - p2)  
+    
+    try:
+        d1 = q1 - p1 # line directors
+        d2 = q2 - p2 # line directors
+    except: 
+        print("UnfuncTypeError")
+        
+        
+        
+    r = p1 - p2 # vector between lines
+    a = np.dot(d1, d1) # squared length of segment 1
+    e = np.dot(d2, d2) # square length of segment 2
+    f = np.dot(d2, r)
+    epsilon = 1e-10
+    
+    # check if both segments are of zero length (degenerate into points)
+    if (a <= epsilon) and (e <= epsilon):
+        s = t = 0.0
+ 
+    if (a <= epsilon):
+        # first segment is a point
+        s = 0.0
+        t = f/e # s=0 => t = (b*s + f)/e = f/e
+        t = clamp(t, 0, 1)
+    else:
+        c = np.dot(d1, r)
+        if (e <= epsilon):
+            # second segment degenerates into a point
+            t = 0.0
+            s = clamp(-c/a, 0.0, 1.0) # t = 0 => s = (b*t - c)/a = -c/a
+        else:
+            # general non-degenerate case starts here
+            b = np.dot(d1, d2)
+            denom = a*e - b*b  # always non-negative
+    
+            # if segments not parallel compute closest point on L1 to L2 and 
+            # clamp to segment S1. Else pick arbitrary s (here 0).
+            if (denom > epsilon):
+                s = clamp((b * f - c * e)/denom, 0.0, 1.0)
+            else:
+                s = 0.0
+    
+            # compute point on L2 cloest to s1(s) using
+            # t = dot( (p1 + D1 * s) - P2, D2 ) / dot(d2, d2) = (b*s + f)/e
+            t = (b * s + f)/e
+            
+            # if t in 0, 1 we are done. else clamp t, recompute s for new
+            # value of t using s = dot((P2 + d2*t) - p1, d1) / dot(d1, d1) = 
+            # (t *b -c)/a and clamp s to [0,1]
+            if (t < 0.0):
+                t = 0.0
+                s = clamp( - c /a, 0.0, 1.0)
+            elif (t > 1.0):
+                t = 1.0
+                s = clamp( (b-c) /a, 0, 1.0)
+                
+    c1 = p1 + d1 * s
+    c2 = p2 + d2 * t
+    
+    # optionally output the director between closest points of approach as well as the distance squared depending on the flag
+    director = c1 - c2
+    outVals = np.dot(director, director)
+    if returnVec:
+        outVals = (outVals, c1 - c2) 
+     
+    return outVals
 
 def cpoa(p1List,p2List,p3List,p4List):
     '''Computes the point of closest approach between the vector between p1 and p2 and the vector between p3 and p4.
@@ -3963,7 +5628,7 @@ def atomsToCOM(atoms):
         newAtom[9]-=COM[2]
         newAtoms.append(newAtom)
         
-    return [COM,newAtoms]
+    return [COM, newAtoms]
 
 
 def readResidueSymmetry(atoms):

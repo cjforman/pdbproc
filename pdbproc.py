@@ -2,6 +2,7 @@
 import sys
 import os
 import pdbLib as pl
+import json
 
 def commandLineProc():
 
@@ -42,6 +43,10 @@ command is one of:
         whose endo and exo states match the endo and exo states of the standard collagen fibre.
     
     checkTorsion or ct or cT or CT inpfile [outfile]
+   
+    concatenatePDBS cpdbs inpfile configfile
+        Takes a glob of PDBS (typically different conformations of the same structure) and then adds them as different models in a single file. 
+        Useful for making movies in VMD. 
    
     crankShaftGroups, crankshaftgroups, csg inpfile nnCutoff dCutoff rotScale include sidegroups 
         Take a pdb and generates an atomgroups file for the GMIN rotategroups command which defines a set of rotation groups 
@@ -91,7 +96,20 @@ command is one of:
             
             If term is 1 then ACE and NME are added also. 
                 
-        
+    dumpParticularAtoms, dpa inpfile config.json
+        Dumps specific atoms in PDB format.  
+        A parameter in the json file 'atomsToDump' is a list of atoms names to dump e.g.
+         {
+             "atomsToDump": [ 'CA', 'C','N'], 
+             "outfile": 'filename' 
+         }
+         
+         will dump the backbone (CA, C and N of the pdb into a fresh pdb called "filename".
+         If outfile name is not present dumps as e.g. infileRoot_CA_C_N.pdb
+
+    dumpCAsAsPDB dCA infile 
+        dumps the input pdb containing only the CAs of a protein. renames as infile_CAOnly.pdb
+         
     eliminateCIS eCIS inpfile
 	    Calls the createCT algorithm to check if the lowest energy pdb has no CIS states
 	    if it does then it generates a new atomGroups file to rotate each half of the CIS peptide bonds by pi/2.
@@ -168,6 +186,12 @@ command is one of:
         the atom numbers will be renumbered.
 
         see readSequence Command
+    
+    pairwisedistance pwd inpPDB configfile.json
+        Takes a PDB or a glob defined in the configfile and uses various algorithms to define sets of residues to find the 
+        distance between them. Plots a matrix of the distance of Center of mass of all CAs in all specified sets. Example config file:
+        
+           
     
     prepAmberGmin or PAG inpfile rulefile forcefield [prepFile] [paramsFile]
         rulefile can be: 
@@ -318,6 +342,20 @@ command is one of:
         renumbers residues starting at 1. looks for inpFile or inpFile.pdb and if outfile is not specified
         writes to inpFile_sort.pdb
     
+    spherowrap or sw inpfile config.json
+    
+        creates a minimal segmented spherocylinder as an envelope around the collection of points stored in the pdb file. 
+    
+    surfaceFind sf inpfile config.json 
+    
+        computes the principal momemnts of inertia to define a max and min bounding box.  
+        The box is split in half in a plane parallel with longest and intermediate axis, which splits the points into two same sized groups.
+        The box is then rotated to yield a flat plan which forms a 2D image map of the protein. 
+        The rolling ball algorithm from opencv is then applied to remove the background.
+        The points that survive are noted as the set of surface residues.  
+        These points define a concave hull and the closest distance of each CA to the hull is computed.
+                 
+    
     torsionDiff or td or tD or Td or TD inpDirectory [outfile]
 
     writepucker or wp inpfile puckerStateFile [outfile]
@@ -377,6 +415,41 @@ command is one of:
             print("fragmentPDB: Must specify inpfile and resflle:  fpdb inpfile resfile")
             exit(1)
 
+    elif command in ['dumpParticularAtoms','dpa']:
+        if len(sys.argv)==4:
+            with open(sys.argv[3], "r") as f: 
+                params=json.load(f)
+            print("dpa params: ", params)
+        else:
+            print("dumpParticularAtoms: Must specify inpfile and configfile:  dap inpfile config.json")
+            exit(1)
+
+    elif command in ['surfaceFind','sf']:
+        if len(sys.argv)==4:
+            with open(sys.argv[3], "r") as f: 
+                params=json.load(f)
+            print("sf params: ", params)
+        else:
+            print("Must specify inpfile and configfile:  sf inpfile config.json")
+            exit(1)
+
+    elif command in ['pairwisedistance', 'pwd']:
+        if len(sys.argv)==4:
+            with open(sys.argv[3], "r") as f: 
+                params=json.load(f)
+            print("pwd params: ", params)
+        else:
+            print("pairwisedistance: Must specify default pdb inpfile and configfile:  pwd inpfile config.json")
+            exit(1)
+
+    elif command in ['concatenatePDBS', 'cpdbs']:
+        if len(sys.argv)==4:
+            with open(sys.argv[3], "r") as f: 
+                params=json.load(f)
+            print("concatenate pdbs params: ", params)
+        else:
+            print("concatenate pdbs: Must specify inpfile and configfile:  cpdbs inpfile config.json")
+            exit(1)
 
     elif command in ['backboneAtomGroups', 'BBAG', 'bbag']:
         if len(sys.argv)==4:
@@ -442,6 +515,12 @@ command is one of:
             print("convertseq: Must specify inpfile and seq flle:  cs inpfile seqfile")
             exit(1)
         params = sys.argv[3]         
+        
+    elif command in ['spherowrap', 'sw']:
+        if len(sys.argv)!=4:
+            print("spherowrap: Must specify inpfile and config flle:  sw inpfile config.json")
+            exit(1)
+        params = sys.argv[3]      
         
     # addTermini or at inpfile N(100,00) C
     elif command in ['addTermini', 'addtermini', 'AddTermini', 'at','aT','AT']:
@@ -538,6 +617,9 @@ command is one of:
 
         print("xyz2pdb command: ")
         print(params)
+
+    elif command in ['dumpCAsAsPDB', 'dCA']:
+        print(" No params: dumping CAs as PDB: pdbproc dCA inpfile")
 
     #Rotate groups
     elif command in ['rotateGroup', 'RG', 'rg']:
@@ -849,6 +931,15 @@ if __name__ == '__main__':
         if command in ['readpucker','rp']:
             pl.readpucker(infile,params)
 
+        elif command in ['dumpParticularAtoms','dpa']:
+            pl.dumpParticularAtoms(infile, params)
+
+        elif command in ['pairwisedistance', 'pwd']:
+            pl.pairwisedistance(infile, params)
+        
+        elif command in ['concatenatePDBS', 'cpdbs']:
+            pl.concatenatePdbs(infile, params)
+
         elif command in ['backboneAtomGroups', 'BBAG', 'bbag']:
             pl.backboneAtomGroups(infile, float(params[0]) )
 
@@ -863,7 +954,7 @@ if __name__ == '__main__':
             pl.createSequence(infile, type=params[2], term=params[1])
         
         elif command in [ 'centrePDB', 'CPDB', 'cPDB', 'cpdb']:
-            pl.centrePDB(infile)
+            pl.centrePDB2(infile)
         
         elif command in ['generateCTAtomGroups', 'GCTAG']:
             pl.generateCTAtomGroups(infile)
@@ -920,7 +1011,16 @@ if __name__ == '__main__':
             pl.renumberResidues(infile,params[0],params[1])
         
         elif command in ['sortRes','sr','sR','SR']:
-            pl.sortResidues(infile,params[0],params[1])
+            pl.sortResidues(infile, params[0], params[1])
+        
+        elif command in ['spherowrap', 'sw']:
+            pl.spherowrap(infile, params)
+        
+        elif command in ['dumpCAsAsPDB', 'dCA']:
+            pl.dumpCAsAsPDB(infile)
+        
+        elif command in ['surfaceFind','sf']:
+            pl.surfaceFind(infile, params)
         
         elif command in ['proToHyp','ph','pH','Ph','PH']:
             pl.proToHyp(infile,params[0],params[1])
@@ -977,3 +1077,5 @@ if __name__ == '__main__':
             pl.replacePdbXYZ(infile,params[0],params[1])
         else:
             print("Unknown Command: " + command)
+
+        print("Done")
