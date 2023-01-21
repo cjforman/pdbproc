@@ -348,14 +348,18 @@ command is one of:
     
     surfaceFind sf inpfile config.json 
     
-        computes the principal momemnts of inertia to define a max and min bounding box.  
-        The box is split in half in a plane parallel with longest and intermediate axis, which splits the points into two same sized groups.
-        The box is then rotated to yield a flat plan which forms a 2D image map of the protein. 
-        The rolling ball algorithm from opencv is then applied to remove the background.
-        The points that survive are noted as the set of surface residues.  
-        These points define a concave hull and the closest distance of each CA to the hull is computed.
-                 
+        Computes the center of mass of subsets of amino acids a certain distance apart along a protein chain. 
+        Generates a smoothed version of the "fold" for a PDB. The vector between each center of mass defines an axis.
+        Compute the distance of each residue (CA) from every segment. Assign each residue to its closest segment.  Use that 
+        to compute the distance of each segment from the notional axis. 
+        
+        Create a histogram of the distance of each residue type from the axis.
+        
+    Surfaces sfs inpfile config.json
     
+        for every model in a PDB run the surfaces algorithm and compute a histogram. Enables the center of mass 
+        and tube radius to emerge over time.
+        
     torsionDiff or td or tD or Td or TD inpDirectory [outfile]
 
     writepucker or wp inpfile puckerStateFile [outfile]
@@ -425,6 +429,15 @@ command is one of:
             exit(1)
 
     elif command in ['surfaceFind','sf']:
+        if len(sys.argv)==4:
+            with open(sys.argv[3], "r") as f: 
+                params=json.load(f)
+            print("sf params: ", params)
+        else:
+            print("Must specify inpfile and configfile:  sf inpfile config.json")
+            exit(1)
+
+    elif command in ['surfacesFind','sfs']:
         if len(sys.argv)==4:
             with open(sys.argv[3], "r") as f: 
                 params=json.load(f)
@@ -1021,6 +1034,9 @@ if __name__ == '__main__':
         
         elif command in ['surfaceFind','sf']:
             pl.surfaceFind(infile, params)
+        
+        elif command in ['surfacesFind','sfs']:
+            pl.surfacesFind(infile, params)
         
         elif command in ['proToHyp','ph','pH','Ph','PH']:
             pl.proToHyp(infile,params[0],params[1])

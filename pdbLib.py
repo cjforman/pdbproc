@@ -919,6 +919,41 @@ def generateUniformRandomCylinder(params):
      
     return outArray
 
+
+def surfacesFind(infile, params):
+    rList = []
+    histList = []
+    # load each model as separate elements in an array of atoms arrays.
+    for i, atoms in enumerate(readModels(infile)):
+        print("Processing model ", i)
+        r, hist = surfaceFindAtoms(atoms, params, plotPNGs=False)    
+        rList.append( cp.copy(r) )
+        histList.append( cp.copy(hist) )
+    
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    cPoint = params['dCutoff']/np.max(rList)
+    #colors = ["red", "white", "black"]
+    cdict = {'red':   [[0.0,  1.0, 1.0],
+                       [cPoint,  0.0, 0.0],
+                       [2 * cPoint, 0.0, 1.0],
+                       [1.0,  0.0, 0.0]],
+             'green': [[0.0,  0.0, 0.0],
+                       [cPoint, 0.0, 0.0],
+                       [2 * cPoint, 1.0, 1.0],
+                       [1.0, 0.0, 0.0]],                       
+             'blue':  [[0.0,  0.0, 0.0],
+                       [cPoint,  1.0, 1.0],
+                       [2 * cPoint, 0.0, 1.0],
+                       [1.0,  0.0, 0.0]]}
+    cutoffColMap = LinearSegmentedColormap("cutoffMap", segmentdata=cdict, N=1000)
+    cax = ax.matshow(rList.todense(), cmap=cutoffColMap, vmin=0, vmax=np.max(rList))
+    fig.colorbar(cax)
+    plt.savefig(params['inputfileroot'] + '_rArray.png',dpi=600)
+    plt.show()
+    
+    
+
 def surfaceFind(infile, params):
 
     # debugging test
@@ -947,6 +982,10 @@ def surfaceFind(infile, params):
     except KeyError:
             print("Loading Atoms from ", infile)
             atoms = readAtoms(infile)
+
+    surfaceFindAtoms(atoms, params)
+
+def surfaceFindAtoms(atoms, params, plotPNGs=True):
 
     # if required filter atoms to CAs
     if params['CAsOnly']:
@@ -1028,7 +1067,7 @@ def surfaceFind(infile, params):
     saveXYZ( PointsCom, params["inputfileroot"] + "_segments.xyz", atomNames )
 
     # If request plot the distances as a straight graph against residue number
-    if params['plotDistances']:
+    if plotPNGs and params['plotDistances']:
         # create a figure
         fig = plt.figure()
         plt.plot([ d[1] for d in distData], 'b+')
@@ -1068,7 +1107,7 @@ def surfaceFind(infile, params):
                   params["inputfileroot"] + '.segInfo')
     
     # If requested plot the segment means and maxes as graph against residue number
-    if params['plotSegments']:
+    if plotPNGs and params['plotSegments']:
         # create a figure
         fig = plt.figure()
         plt.plot([ d[1] for d in distData], 'b+')
@@ -1108,7 +1147,7 @@ def surfaceFind(infile, params):
     writeTextFile([str(d[1]) for d in distDataScaled], params["inputfileroot"] + '.SegScaledDist')
     
     # If requested plot the scaled distances as a straight graph against residue number
-    if params['plotDistances']:
+    if plotPNGs and params['plotDistances']:
         # create a figure
         fig = plt.figure()
         plt.plot([ d[1] for d in distDataScaled], 'b+')
@@ -1130,7 +1169,7 @@ def surfaceFind(infile, params):
     resListFull = [ atom[3] for atom in selectedAtoms ] 
 
     # if requested plot the histogram of all the residues in the sequence.
-    if params['reqFullResHistogram']:
+    if plotPNGs and params['reqFullResHistogram']:
         # create a figure
         fig = plt.figure()
         labels, counts = np.unique(resListFull, return_counts=True)
@@ -1145,15 +1184,16 @@ def surfaceFind(infile, params):
         plt.show()
 
     print("Computing Radial Density Profile by Residue Type")
+
     
     # set up the figure
     fig = plt.figure()
-    
+
     max_l_array = plotRadialDensityByResidue(fig, distDataScaled, TubeLength, params)
 
     # dump a text file with the max residue distance information
     writeTextFile(max_l_array, params["inputfileroot"] + 'mean_max_perResType.info')
-
+    
     # over plot on same graph as fig
     try:
         if not params['uniformCylinder']==0:
@@ -1168,7 +1208,11 @@ def surfaceFind(infile, params):
         pass
 
     plt.savefig(params['inputfileroot'] + '_radial_distribution.png', dpi=600)
-    plt.show()
+
+    if plotPNGs:
+        plt.show()
+        
+    return tubeOuterRadius, max_l_array
 
 def moving_average(a, n=3) :
     ret = np.cumsum(a, dtype=float)
@@ -3784,6 +3828,28 @@ def readAtoms(filename):
     atoms=extractAtomsFromPDB(pdb)
     return atoms
 
+def readModels(filename):
+
+    models =[]
+    atoms = []
+    try:
+        with open(filename, 'r') as fPtr:
+            for l in fPtr.readlines():
+                if l[0:6] == 'ENDMDL':
+                    models.append(cp.copy(atoms))
+                    atoms = []
+                else:
+                    if l[0:4]=='ATOM':
+                        atoms.append(parsePdbLine(l))
+            
+    except IOError as e:
+        print("I/O error({0}): {1}".format(e.errno, e.strerror) )
+        raise Exception( "Unable to open input file: " + filename )
+
+    return models
+
+
+
 def readAllAtoms(filename):
     pdb=readTextFile(filename)
     atoms=extractAllAtomsFromPDB(pdb)
@@ -3846,6 +3912,18 @@ def writeTextFile(lines, filename, append=False):
         vst.write(a)
     vst.close()
     return
+
+def extractAtomFromPDB(line, HETATM=False):
+    a = None
+    #parse data 
+    if line[0:4]=="ATOM" or (HETATM and line[0:6]=="HETATM"):
+        try:
+            a = parsePdbLine(line)
+        except:
+            print("line: " + line + " not understood" )
+            exit(0)
+    return a
+
 
 def extractAllAtomsFromPDB(lines):
     #parse data 
