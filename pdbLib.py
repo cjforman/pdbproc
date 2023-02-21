@@ -7,6 +7,7 @@ from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.patches import FancyArrowPatch
 from scipy.optimize import fmin_l_bfgs_b, minimize
 import scipy.stats as st
+from scipy.spatial.transform import Rotation
 from itertools import chain
 import copy as cp
 import glob
@@ -174,6 +175,18 @@ AAColDict = {
     'VAL': "#6ac7ea"
     }
 
+atomnamesToElement = {
+    'C':'C',
+    'O':'O',
+    'N':'N',
+    'H1':"H",
+    'H2':"H",
+    'H3':"H",
+    'CA':"C",
+    'HA1':"H",
+    'HA1':"H",
+    'HA1':"H"}
+
 class Arrow3D(FancyArrowPatch):
     def __init__(self, xs, ys, zs, *args, **kwargs):
         FancyArrowPatch.__init__(self, (0,0), (0,0), *args, **kwargs)
@@ -184,6 +197,215 @@ class Arrow3D(FancyArrowPatch):
         xs, ys, zs = proj3d.proj_transform(xs3d, ys3d, zs3d, renderer.M)
         self.set_positions((xs[0],ys[0]),(xs[1],ys[1]))
         FancyArrowPatch.draw(self, renderer)
+
+def getBackBone( atoms ):
+    atomNames = [ a[1] for a in atoms]
+    atomCoords = [ np.array( [a[6], a[7], a[8]] ) for a in atoms ]
+    return [ a for a, n in zip( atomCoords, atomNames ) if n in ['C', 'CA', 'N'] ]
+    
+def elementFromAtomName(aName):
+    el = 'default'
+    if 'H' in aName:
+        el = 'H'
+    elif 'N' in aName:
+        el = 'N'
+    elif 'O' in aName:
+        el = 'O'
+    elif 'C' in aName:
+        el = 'C'
+
+    if el=='default':
+        el = aName
+    
+    return el
+
+def getSeq(residues, p, k):
+    s = ''
+    for resNum in residues:
+        if resNum>=p and resNum<(p + k):
+            s += getSingleLetterFromThreeLetterAACode( residues[resNum][0][3] )
+    return s
+
+def hammingDistance(s1, s2):
+    h = 0
+    if len(s1)==len(s2):
+        for s,r in zip(s1,s2):
+            if s!=r:
+                h+=1
+    else:
+        print("Warning: strings different length when computing hamming distance")
+    return h
+
+
+def calculate_rmsd(coords1, coords2):
+    dist = np.linalg.norm(coords1 - coords2, axis=1)
+    return np.sqrt((dist**2).sum() / len(dist))
+
+
+# takes two sets of coords that must be same length and determines rot matrix that yields closest orientation
+# when both coords are translated to center of mass.   
+# Assumes that the coords are in precise pairwise correspondance. (i.e. doesn't search over permutations)
+# returns a scipy rotation matrix object and the rmsd and the center of mass of the two sets of coords
+def alignCoords(coords1, coords2):    
+    
+    com1 = getCentreOfMass(coords1)
+    com2 = getCentreOfMass(coords2)
+
+    coords1_COM = coords1 - com1
+    coords2_COM = coords2 - com2
+
+    R, rssd = Rotation.align_vectors(coords1_COM, coords2_COM)
+
+    return R, rssd/np.sqrt(len(coords2)), com1, com2
+    
+# takes a set of coords and a scipy rotation object, rotates the coords and returns then at new COM
+# returns them at position NewCOM
+def transformCoords(coordsToRotate, R, newCOM):
+    return R.apply(coordsToRotate - getCentreOfMass(coordsToRotate)) + newCOM
+
+# takes two PDBs and rotates the second one to align with the first with the coords replaced in a new pdb
+# subset information is contained in the config file
+# p1, p2 and k define the residue length and positions of the two pdbs at which to align the backbone
+# if these are omitted then whatever is in both pdbs are used and hoped to be the same length.  
+def alignPDBs( params ):
+    # read the atoms
+    atoms1 = readAtoms(params['inpfile1']) # static structure
+    pdb2 = readTextFile(params['inpfile2'])
+    atoms2 = extractAtomsFromPDB(pdb2)
+    coords2Rotate = [ np.array([a[7], a[8], a[9]]) for a in atoms2 ]
+    
+    if params['residuesToUse']:
+        # get the residues
+        residues1 = breakAtomsIntoResidueDicts(atoms1)
+        residues2 = breakAtomsIntoResidueDicts(atoms2)
+
+        # count the number of residues in each case
+        p1 = params['residuesToUse'][0]
+        p2 = params['residuesToUse'][1]
+        k = params['residuesToUse'][2]
+        
+        coords1 = extractBackbone(residues1, p1, k)
+        coords2 = extractBackbone(residues2, p2, k)
+    else:
+        coords1 = [ np.array([a[7], a[8], a[9]]) for a in atoms1]
+        coords2 = coords2Rotate
+    
+    R, rmsd, com1, com2 = alignCoords(coords1, coords2)
+    
+    print("RMSD of aligned PDBs is: ", rmsd)
+    replacePdbAtoms(params['inpfile2'], transformCoords(coords2Rotate, R, com1), params['inpfile2'][:-4] + '_rot.pdb', pdb=pdb2, atoms=atoms2)
+    
+# takes a long and short PDB and computes the rmsd between short one at each point of the long one.
+# Does this in steps of one residue. 
+# Outputs an xyz file which is the aligned structure at each residue step.
+# Dumps the rmsd and hamming distance of the sequence at each point in a file, as well as the local sequence at that point.
+# Uses only the backbone (N, CA, C) of the two sequences to determine the rotation matrix which avoids permutational complications 
+def correlatePDBs( params ):
+    # read the atoms
+    atoms1 = readAtoms(params['inpfile1']) # static structure
+    atoms2 = readAtoms(params['inpfile2']) # mobile structure
+
+    # get the names of the mobile xyz for output
+    names = [ elementFromAtomName(a[1]) for a in atoms2 ]
+    
+    # get all the atomic coords of the mobile xyz. This is the set that will be rotated in the output xyz file
+    coordsToRotate = np.array([ np.array([a[7], a[8], a[9]]) for a in atoms2 ])
+
+    # get the residues
+    residues1 = breakAtomsIntoResidueDicts(atoms1)
+    residues2 = breakAtomsIntoResidueDicts(atoms2)
+
+    # specify the residues to use
+    n = len(residues1)
+    try:
+        p1 = params['residuesToUse'][0]
+        p2 = params['residuesToUse'][1]
+        k = params['residuesToUse'][2]
+    except KeyError:
+        p1 = 1
+        p2 = 1
+        k = len(residues2)
+
+    # extract the backbone of the mobile unit (same in each case)
+    mobileBackbone = extractBackbone(residues2, p2, k)
+    mobSeq = getSeq(residues2, p2, k)
+
+    # output     
+    outListString = []
+    outListData = []
+
+    outfileroot = params['inpfile1'][:-4] + '_' + params['inpfile2'][:-4]
+    
+    # loop through each position of the static backbone
+    for p in range(p1, n - k + 1):
+
+        staticBackbone = extractBackbone(residues1, p, k)
+        staticSeq = getSeq(residues1, p, k)
+        
+        # get closest RMSD of backbone diffs and positions of all atoms at smallest d
+        # d = (rmsd, newMobileAtomPosns)
+        R, rmsd, com1, com2 = alignCoords(staticBackbone, mobileBackbone) 
+        h = hammingDistance(staticSeq, mobSeq)
+
+        # build up output list
+        outListData.append((p, rmsd, h, staticSeq))
+
+        # rotate all the atoms from the short pdb and append to the XYZ file                  
+        append=True
+        if p==p1:
+            append=False
+        
+        # append the rotated atoms into an xyz file
+        saveXYZ( transformCoords(coordsToRotate, R, com1),  outfileroot + '.xyz', names, append=append)
+    
+    for d in outListData:    # build up output list as string
+        outListString.append( str(d[0]) + ', ' + str(d[1]) + ', ' + str(d[2]) + ', ' + d[3] + ', ' + mobSeq + '\n' )
+
+    
+    
+    # write the outlist info as a file    
+    writeTextFile(outListString,  outfileroot + '.rmsd', append=False)        
+
+    # create a figure
+    fig = plt.figure(figsize=(8, 9))
+    
+    ax1 = plt.subplot(311)
+    plt.title(mobSeq + " RMSD and Hamming Distance Vs Position")
+    ax1.set_ylabel('RMSD') 
+    ax1.plot([ d[1] for d in outListData],'b+-', zorder=10) 
+    
+    ax2 = plt.subplot(312)
+    ax2.set_ylabel('Hamming Distance') 
+    ax2.set_xlabel('Residue Number')
+    ax2.plot([ d[2] for d in outListData],
+             markeredgewidth = 1,
+             markerfacecolor = 'None',
+             markeredgecolor='None',
+             marker='+',
+             markersize=10,
+             linestyle = '-',
+             color='red',
+             zorder=2) 
+    
+    ax3 = plt.subplot(313)
+    ax3.plot([ d[2] for d in outListData], [ d[1] for d in outListData], 'g+')
+    ax3.set_xlabel('Hamming Distance')
+    ax3.set_ylabel('RMSD' )
+    
+    plt.savefig(outfileroot + '.png', dpi=300)
+    plt.show()
+    
+    
+def extractBackbone(resDict, res1, length):
+    out = []
+    for p in range(res1, res1 + length):
+        try:
+            for atom in resDict[p]:
+                if atom[1] in ['N', 'C', 'CA']:
+                    out.append( np.array( [atom[7], atom[8], atom[9]] ) )
+        except KeyError:
+            pass
+    return out
 
 def dumpCAsAsPDB(infile):
     atoms = readAtoms(infile)

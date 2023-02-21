@@ -24,6 +24,22 @@ command is one of:
         otherwise default is 0, 109.
         Bond length is difference between C and CA or CA and N in adjacent residue. 
 
+    alignPdbs inpfile1 inpfile2 config.json
+    
+        takes two PDBs and aligns the second with the first returning a third PDB with the aligned structure.
+        parmeters for json:
+        
+        {
+          'backboneOnly': True,
+          'position': 1
+        }
+            
+        backboneOnly specifies that only the backbone are used to perform the alignment and the position specifies 
+        which residues in the first structure should be aligned with those in the second structure. 
+    
+        see also correlate PDBs, which runs this algorithm at each point
+
+
     backboneAtomGroups inpfile angRange
         
         aliases: BBAG, bbag
@@ -47,6 +63,17 @@ command is one of:
     concatenatePDBS cpdbs inpfile configfile
         Takes a glob of PDBS (typically different conformations of the same structure) and then adds them as different models in a single file. 
         Useful for making movies in VMD. 
+   
+    correlatePdbs or corrpdb inpfile1 inpfile2
+        Takes two PDBs and aligns the second at each residue position of the first.  
+        Essentially performs an "alignment correlation" along their structure length using the Kabsch alignment algorithm in Scipy.
+        
+        A file is dumped containing the RMSD information as well as the hamming distance of the short sequence 
+        from the local sequence in the first structure.
+        
+        A figure is produced showing the rmsd correlation function and hamming distance 
+
+        see also alignPDBs which uses the same internal alignment algorithm and dumps a pdb of the second file aligned at a specific position. 
    
     crankShaftGroups, crankshaftgroups, csg inpfile nnCutoff dCutoff rotScale include sidegroups 
         Take a pdb and generates an atomgroups file for the GMIN rotategroups command which defines a set of rotation groups 
@@ -419,6 +446,30 @@ command is one of:
             print("fragmentPDB: Must specify inpfile and resflle:  fpdb inpfile resfile")
             exit(1)
 
+    elif command in ['alignPdbs', 'apdb']:
+        if len(sys.argv)==5:
+            with open(sys.argv[4], "r") as f: 
+                params=json.load(f)
+            params['inpfile1']=sys.argv[2]
+            params['inpfile2']=sys.argv[3]
+            print("alignpdb params: ", params)
+        else:
+            print("alignPdbs: Must specify inpfile1, inpfile2 and configfile:  alignPdbs inpfile1 inpfile2 config.json")
+            exit(1)
+
+    elif command in ['correlatePdbs', 'corrpdb']:
+        if len(sys.argv)==5:
+            with open(sys.argv[4], "r") as f: 
+                params=json.load(f)
+            params['inpfile1']=sys.argv[2]
+            params['inpfile2']=sys.argv[3]
+            print("correlatePdbs params: ", params)
+        else:
+            print("correlatePdbs: Must specify inpfile1, inpfile2 configfile.json")
+            exit(1)
+
+
+           
     elif command in ['dumpParticularAtoms','dpa']:
         if len(sys.argv)==4:
             with open(sys.argv[3], "r") as f: 
@@ -942,7 +993,13 @@ if __name__ == '__main__':
         [infile, command, params] = commandLineProc()
 
         if command in ['readpucker','rp']:
-            pl.readpucker(infile,params)
+            pl.readpucker(infile, params)
+
+        elif command in ['alignPdbs', 'apdb']:
+            pl.alignPDBs( params )
+        
+        elif command in ['correlatePdbs', 'corrpdb']:
+            pl.correlatePDBs( params )
 
         elif command in ['dumpParticularAtoms','dpa']:
             pl.dumpParticularAtoms(infile, params)
