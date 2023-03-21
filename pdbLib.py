@@ -16,6 +16,15 @@ import random as rnd
 import itertools as iter
 from scipy import signal
 import networkx as nx
+import requests
+import pyvista as pv
+import periodictable as PT
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
+import pickle
+from tensorflow.random import normal
+from tensorflow import keras as K, expand_dims
+from tensorflow.compat.v1 import keras as TK
 
 # A global dictionary containing the information on which side groups can rotate for the various amino acids.
 # don't include the rotation axis in the list of atoms 
@@ -184,8 +193,10 @@ atomnamesToElement = {
     'H3':"H",
     'CA':"C",
     'HA1':"H",
-    'HA1':"H",
-    'HA1':"H"}
+    'HA2':"H",
+    'HA3':"H",
+    'HN':"H",
+    'HA':"H"}
 
 class Arrow3D(FancyArrowPatch):
     def __init__(self, xs, ys, zs, *args, **kwargs):
@@ -198,11 +209,14 @@ class Arrow3D(FancyArrowPatch):
         self.set_positions((xs[0],ys[0]),(xs[1],ys[1]))
         FancyArrowPatch.draw(self, renderer)
 
-def getBackBone( atoms ):
-    atomNames = [ a[1] for a in atoms]
-    atomCoords = [ np.array( [a[6], a[7], a[8]] ) for a in atoms ]
-    return [ a for a, n in zip( atomCoords, atomNames ) if n in ['C', 'CA', 'N'] ]
-    
+def getBackBone( atoms , testSet=['C', 'CA', 'N']):
+    return [ np.array( [float(a[7]), float(a[8]), float(a[9])] ) for a in atoms if a[1] in testSet ]
+
+
+def getResNames(atoms, testSet= ['CA']):
+    return [ a[3] for a in atoms if a[1] in testSet ]
+
+
 def elementFromAtomName(aName):
     el = 'default'
     if 'H' in aName:
@@ -241,6 +255,565 @@ def calculate_rmsd(coords1, coords2):
     dist = np.linalg.norm(coords1 - coords2, axis=1)
     return np.sqrt((dist**2).sum() / len(dist))
 
+
+# generate samples and save as a plot and save the model
+def summarize_performance(step, g_model, latent_dim, n_samples=100):
+    # prepare fake examples
+    X, _ = generate_fake_samples(g_model, latent_dim, n_samples)
+    # scale from [-1,1] to [0,1]
+    X = (X + 1) / 2.0
+    # plot images
+    for i in range(10 * 10):
+        # define subplot
+        plt.subplot(10, 10, 1 + i)
+        # turn off axis
+        plt.axis('off')
+        # plot raw pixel data
+        plt.imshow(X[i, :, :, 0], cmap='gray_r')
+        # save plot to file
+        plt.savefig('results_baseline/generated_plot_%03d.png' % (step+1))
+        plt.close()
+
+    # save the generator model
+    g_model.save('results_baseline/model_%03d.h5' % (step+1))
+
+
+def train(g_model, d_model, gan_model, dataset, latent_dim, n_epochs=10, n_batch=128):
+    # calculate the number of batches per epoch
+    bat_per_epo = int(dataset.shape[0] / n_batch)
+    # calculate the total iterations based on batch and epoch
+    n_steps = bat_per_epo * n_epochs
+    # calculate the number of samples in half a batch
+    half_batch = int(n_batch / 2)
+    # prepare lists for storing stats each iteration
+    d1_hist, d2_hist, g_hist, a1_hist, a2_hist = list(), list(), list(), list(), list()
+
+    # manually enumerate epochs
+    for i in range(n_steps):
+        # get randomly selected 'real' samples
+        X_real, y_real = generate_real_samples(dataset, half_batch)
+    
+        # update discriminator model weights
+        d_loss1, d_acc1 = d_model.train_on_batch(X_real, y_real)
+        
+        # generate 'fake' examples
+        X_fake, y_fake = generate_fake_samples(g_model, latent_dim, half_batch)
+        
+        # update discriminator model weights
+        d_loss2, d_acc2 = d_model.train_on_batch(X_fake, y_fake)
+        
+        # prepare points in latent space as input for the generator
+        X_gan = generate_latent_points(latent_dim, n_batch)
+        
+        # create inverted labels for the fake samples
+        y_gan = np.ones((n_batch, 1))
+        
+        # update the generator via the discriminator's error
+        g_loss = gan_model.train_on_batch(X_gan, y_gan)
+        
+        # summarize loss on this batch
+        print('>%d, d1=%.3f, d2=%.3f g=%.3f, a1=%d, a2=%d' %
+        (i+1, d_loss1, d_loss2, g_loss, int(100*d_acc1), int(100*d_acc2)))
+
+        # record history
+        d1_hist.append(d_loss1)
+        d2_hist.append(d_loss2)
+        g_hist.append(g_loss)
+        a1_hist.append(d_acc1)
+        a2_hist.append(d_acc2)
+
+        # evaluate the model performance every 'epoch'
+        if (i+1) % bat_per_epo == 0:
+            summarize_performance(i, g_model, latent_dim)
+
+    plot_history(d1_hist, d2_hist, g_hist, a1_hist, a2_hist)
+
+# create a line plot of loss for the gan and save to file
+def plot_history(d1_hist, d2_hist, g_hist, a1_hist, a2_hist):
+    # plot loss
+    plt.subplot(2, 1, 1)
+    plt.plot(d1_hist, label='d-real')
+    plt.plot(d2_hist, label='d-fake')
+    plt.plot(g_hist, label='gen')
+    plt.legend()
+    # plot discriminator accuracy
+    plt.subplot(2, 1, 2)
+    plt.plot(a1_hist, label='acc-real')
+    plt.plot(a2_hist, label='acc-fake')
+    plt.legend()
+    # save plot to file
+    plt.savefig('results_baseline/plot_line_plot_loss.png')
+    plt.close()
+
+# load mnist images
+def load_real_samples():
+    # load dataset
+    (trainX, trainy), (_, _) = K.datasets.mnist.load_data()
+    # expand to 3d, e.g. add channels
+    X = np.expand_dims(trainX, axis=-1)
+    # select all of the examples for a given class
+    selected_ix = trainy == 8
+    X = X[selected_ix]
+    # convert from ints to floats
+    X = X.astype('float32')
+    # scale from [0,255] to [-1,1]
+    X = (X - 127.5) / 127.5
+    return X
+
+def generate_real_samples(dataset, n_samples):
+    # choose random instances
+    ix = np.random.randint(0, dataset.shape[0], n_samples)
+    # select images
+    X = dataset[ix]
+    # generate class labels
+    y = np.ones((n_samples, 1))
+    return X, y
+
+# use the generator to generate n fake examples, with class labels
+def generate_fake_samples(generator, latent_dim, n_samples):
+    # generate points in latent space
+    x_input = generate_latent_points(latent_dim, n_samples)
+    # predict outputs
+    X = generator.predict(x_input)
+    # create class labels
+    y = np.zeros((n_samples, 1))
+    return X, y
+
+def generate_latent_points(latent_dim, n_samples):
+    # generate points in the latent space
+    x_input = np.random.randn(latent_dim * n_samples)
+    # reshape into a batch of inputs for the network
+    x_input = x_input.reshape(n_samples, latent_dim)
+    return x_input
+
+
+def define_gan(generator, discriminator):
+    # make weights in the discriminator not trainable
+    discriminator.trainable = False
+    # connect them
+    model = K.models.Sequential()
+    # add generator
+    model.add(generator)
+    # add the discriminator
+    model.add(discriminator)
+    # compile model
+    opt = K.optimizers.Adam(lr=0.0002, beta_1=0.5)
+    model.compile(loss='binary_crossentropy', optimizer=opt)
+    return model
+
+def define_discriminator(in_shape=(28,28,1)):
+    # weight initialization
+    init = K.initializers.RandomNormal(stddev=0.02)
+    # define model
+    model = K.models.Sequential()
+    # downsample to 14x14
+    model.add(K.layers.Conv2D(64, (4,4), strides=(2,2), padding='same', kernel_initializer=init, input_shape=in_shape))
+    model.add(K.layers.LeakyReLU(alpha=0.2))
+    # downsample to 7x7
+    model.add(K.layers.Conv2D(64, (4,4), strides=(2,2), padding='same', kernel_initializer=init))
+    model.add(K.layers.LeakyReLU(alpha=0.2))
+    # classifier
+    model.add(K.layers.Flatten())
+    model.add(K.layers.Dense(1, activation='sigmoid'))
+    # compile model
+    opt = K.optimizers.Adam(lr=0.0002, beta_1=0.5)
+    model.compile(loss='binary_crossentropy', optimizer=opt, metrics=['accuracy'])
+    return model
+
+def define_generator(latent_dim):
+    # weight initialization
+    init = K.initializers.RandomNormal(stddev=0.02)
+    # define model
+    model = K.models.Sequential()
+    # foundation for 7x7 image
+    n_nodes = 128 * 7 * 7
+    model.add(K.layers.Dense(n_nodes, kernel_initializer=init, input_dim=latent_dim))
+    model.add(K.layers.LeakyReLU(alpha=0.2))
+    model.add(K.layers.Reshape((7, 7, 128)))
+    # upsample to 14x14
+    model.add(K.layers.Conv2DTranspose(128, (4,4), strides=(2,2), padding='same', kernel_initializer=init))
+    model.add(K.layers.LeakyReLU(alpha=0.2))
+    # upsample to 28x28
+    model.add(K.layers.Conv2DTranspose(128, (4,4), strides=(2,2), padding='same', kernel_initializer=init))
+    model.add(K.layers.LeakyReLU(alpha=0.2))
+    # output 28x28x1
+    model.add(K.layers.Conv2D(1, (7,7), activation='tanh', padding='same', kernel_initializer=init))
+    return model
+
+
+# Define the generator network
+def build_generator(latent_dim, input_dim):
+    model = K.models.Sequential()
+    
+    model.add(K.layers.Dense(128, input_shape=(latent_dim,)))
+    model.add(K.layers.LeakyReLU(alpha=0.2))
+    
+    model.add(K.layers.Dense(256))
+    model.add(K.layers.LeakyReLU(alpha=0.2))
+    
+    model.add(K.layers.Dense(512))
+    model.add(K.layers.LeakyReLU(alpha=0.2))
+
+    model.add(K.layers.Dense(input_dim, activation='tanh'))
+    assert model.output_shape == (None, input_dim)
+    
+    model.summary()
+    return model
+
+# Define the discriminator network
+def build_discriminator(input_dim):
+    model = K.models.Sequential()
+    model.add(K.layers.Dense(512, input_dim=input_dim))
+    model.add(K.layers.LeakyReLU(alpha=0.2))
+    model.add(K.layers.Dense(256))
+    model.add(K.layers.LeakyReLU(alpha=0.2))
+    model.add(K.layers.Dense(128))
+    model.add(K.layers.LeakyReLU(alpha=0.2))
+    model.add(K.layers.Dense(1, activation='sigmoid'))
+    
+    model.summary()
+    return model
+
+def build_gan(generator, discriminator, latent_dim):
+    gan_input = K.layers.Input(shape=(latent_dim,))
+    gan_output = discriminator(generator(gan_input))
+    gan = K.models.Model(inputs=gan_input, outputs=gan_output)
+    gan.summary()
+    return gan
+
+
+# takes an input into the gan as a vector and the output 
+# and returns a matrix which is the size of a conformation 
+# showing distance information in matrix form.
+# note the output matrix is (N + 1) x (N + 1).
+# to avoid overwrite central diagonal with either input or output
+# the whole thing is cosmetic anyway
+def convertDataToArray(v, N):
+    X = np.zeros(( N, N ))
+    X[np.triu_indices(X.shape[0], k = 1)] = v.eval(session = TK.backend.get_session())
+    return X + X.T - np.diag(np.diag(X))
+
+# helper function to take a bunch of input and some parameters and output a set of arrays of what the system is seeing
+def generate_and_save_images(model, epoch, test_data, rangeScale, matrixLength, directory):
+    
+    predictions = model(test_data)
+
+    # generate image
+    fig = plt.figure(figsize=(4,4))
+    for i in range(predictions.shape[0]):
+        plt.subplot(4, 4, i + 1)
+        plt.matshow(convertDataToArray(predictions[i,:] * rangeScale/2.0 + rangeScale/2, matrixLength), fignum=0, cmap='gray')        
+        plt.axis('off')
+    plt.savefig(os.path.join(directory, 'image_at_epoch_{:04d}.png'.format(epoch)))
+    plt.close(fig)
+
+def buildGanModel(latent_dim, numFeatures):
+    # Define the GAN architecture
+    generator = build_generator(latent_dim, numFeatures)
+    discriminator = build_discriminator(numFeatures)
+    gan = build_gan(generator, discriminator, latent_dim)
+
+    discriminator.compile(loss='binary_crossentropy', optimizer=K.optimizers.Adam(lr=0.0002, beta_1=0.5), metrics=['accuracy'])
+    discriminator.trainable=False
+    gan.compile(loss='binary_crossentropy', optimizer=K.optimizers.Adam(lr=0.0002, beta_1=0.5))
+
+    return generator, discriminator, gan
+
+
+def conditionData(data):
+    dataRange = (np.max(data) - np.min(data))/2.0
+    data = ( data - dataRange )/ dataRange
+    return data, dataRange
+   
+    
+def learnStructuresGAN(directory, subSequenceLength=15, stepSize=5, epochs=10000, batch_size=32, latent_dim=100, **params):
+
+    # Load the data
+    print("Loading Data")
+    data = loadPDBSetAsDistances(directory, subSequenceLength, stepSize)
+    numTrajectories = data.shape[0]
+    numFeatures = data.shape[1]
+    
+    # make data the right shape and range
+    data, dataRange = conditionData(data)
+
+    # this is a seed to help visualise progress
+    seed = normal([16, latent_dim])
+
+    # put aside some training data for validation
+    validationIndex = int(numTrajectories/10)
+    validationSet = data[0:validationIndex,:]
+    trainingSet = data[validationIndex:,:]
+
+    print("training GAN")
+    generator, discriminator, gan = buildGanModel(latent_dim, numFeatures)
+    
+    # set up saving function
+    # checkpoint_prefix = os.path.join(directory, "ckpt")
+    # checkpoint = Checkpoint(generator_optimizer=generator.optimizer,
+                            # discriminator_optimizer=discriminator.optimizer,
+                            # generator=generator,
+                            # discriminator=discriminator,
+                            # gan=gan)
+    
+    # Train the GAN
+    for epoch in range(epochs):
+        #generator.trainable = False
+        discriminator.trainable=True
+        # print("Training discriminator")
+        # print("disc: ", discriminator.trainable_weights)
+        # print("generator: ", generator.trainable_weights)
+        # set up real training data
+        idx = np.random.randint(0, trainingSet.shape[0], batch_size)
+        real_conformations = trainingSet[idx]
+
+        # set up fake training data
+        noise = np.random.normal(0, 1, (batch_size, latent_dim))
+        fake_conformations = generator.predict(noise)
+
+        # train the discriminator
+        d_loss_real = discriminator.train_on_batch(real_conformations, np.ones( (batch_size, 1)))
+        d_loss_fake = discriminator.train_on_batch(fake_conformations, np.zeros( (batch_size, 1)))
+        d_loss = 0.5 * np.add(d_loss_real, d_loss_fake)
+
+        # set up more noise
+        noise = np.random.normal(0, 1, (2 * batch_size, latent_dim))
+        # freeze the discriminator
+        # print("Training generator")
+        discriminator.trainable=False
+        #generator.trainable=True
+        # print("disc: ", discriminator.trainable_weights)
+        # print("generator: ", generator.trainable_weights)
+
+        # Train the generator
+        g_loss = gan.train_on_batch(noise, np.ones(2 * batch_size))
+        
+        # dump a test batch of input and see the outputs    
+        if epoch % 100 ==0:
+            generate_and_save_images(generator, epoch, seed, dataRange, subSequenceLength, directory)
+            # checkpoint.save(file_prefix = checkpoint_prefix)
+
+            # Print the progress
+            print("%d [D loss: %f, acc.: %.2f%%] [G loss: %f]" % (epoch, d_loss[0], 100 * d_loss[1], g_loss))
+    
+        if epoch % 1000==0:
+            # do a little test    
+            # put some random noise into the discriminator and see what it says!
+            fakeSet = np.random.normal(0, 1, (batch_size, numFeatures))
+            realResults = discriminator.predict(validationSet)
+            fakeResults = discriminator.predict(fakeSet)
+            print("Real Results:", realResults)
+            print("Fake Results:", fakeResults)
+        
+    
+    # dump the final model
+    generate_and_save_images(generator, epoch, seed, dataRange, subSequenceLength, directory)
+    #K.models.save_model(generator, os.path.join(directory + 'generator.mdl'), overwrite=True, include_optimizer=True)
+    #K.models.save_model(discriminator, os.path.join(directory + 'discriminator.mdl'), overwrite=True, include_optimizer=True)
+    #K.models.save_model(gan, os.path.join(directory + 'gan.mdl'), overwrite=True, include_optimizer=True)    
+
+    # do final test    
+    # put some random noise into the discriminator and see what it says!
+    fakeSet = np.random.normal(0, 1, (batch_size, numFeatures))
+    realResults = discriminator.predict(validationSet)
+    fakeResults = discriminator.predict(fakeSet)
+    print("Real Results:", realResults)
+    print("Fake Results:", fakeResults)
+    # dump the pickled models to file in the same directory as the PDBS
+    #with open(os.path.join(directory, 'generator.pkl'), 'wb') as file:
+    #    pickle.dump(generator, file)
+
+    #with open(os.path.join(directory, 'discriminator.pkl'), 'wb') as file:
+    #    pickle.dump(generator, file)
+
+ 
+        
+    return generator, discriminator, gan
+
+
+def interrogateGan(directory, discriminator, subSequenceLength=15, stepSize=5, **params):
+
+    testSet = loadPDBSetAsDistances(directory, subSequenceLength, stepSize)
+    testSet, testSetRange = conditionData(testSet)
+
+    scores = discriminator.predict(testSet)
+
+    
+    print("Labels:", scores)
+
+
+def GanTrain(trainSetDir, **params):
+    
+    print("Commencing training")
+    # G, D, Gan = learnStructuresGAN(trainSetDir, **params)
+    os.makedirs('results_baseline', exist_ok=True)
+    # size of the latent space
+    latent_dim = 50
+    # create the discriminator
+    discriminator = define_discriminator()
+    # create the generator
+    generator = define_generator(latent_dim)
+    # create the gan
+    gan_model = define_gan(generator, discriminator)
+    # load image data
+    dataset = load_real_samples()
+    print(dataset.shape)
+    # train model
+    train(generator, discriminator, gan_model, dataset, latent_dim)
+
+
+
+def GanCompare(trainSetDir, testSetDir, **params):
+
+    print("loadingModel")
+    discriminator = K.models.load_model(os.path.join(trainSetDir,'discriminator'))
+    
+    print("Do Testing")
+    interrogateGan(testSetDir, discriminator, **params)
+
+# converts a set of PDBS into fragments of NMers which are all aligned with a reference structure.
+# the PDBS are in the input directory, and the Nmers are subSequenceLength long, stepsize says
+# how far apart to sample the NMErs from the PDBS. 
+def loadPDBSetAligned(referenceFile, inputDirectory, subSequenceLength, stepSize):
+
+    # get a list of pdb files from the specified directory
+    filelist = glob.glob(os.path.join(inputDirectory, "*.pdb"))
+
+    # becomes the output list
+    pointsList = [] 
+
+    # load the reference coords into a List - only load the backbones. not bothered about side chains. 
+    refCoords = [ np.array([r[7], r[8], r[9]]) for r in readAtoms( referenceFile ) if r[1] in ['C', 'N', 'CA']]
+
+    # generate reference structure and move to center of mass coords
+    refStruc = cp.copy(refCoords[0:0 + subSequenceLength])
+    refStruc = refStruc - getCentreOfMass(refStruc)
+
+    # loop through each pdb file.         
+    for filepath in filelist:
+ 
+        # load the atomic coords into a List - only load the CAs. not bothered about side chains. 
+        points = [ np.array([r[7], r[8], r[9]]) for r in readAtoms(filepath) if r[1] in ['CA']]
+        
+        # loop through each residue position in the input.
+        for i in range(0, len(points) - subSequenceLength, stepSize):
+
+            # extract the nmer in a new array     
+            nmer = cp.copy(points[i:i + subSequenceLength])
+
+            # aligns the new nmer with the centered reference structure
+            R, rmsd, Com1, Com2 = alignCoords( nmer, refStruc )
+                
+            # transforms the nmer to being at the origin aligned with the first item on list
+            nmerNew = transformCoords( nmer, R, np.array([0.0, 0.0, 0.0]) )
+
+            # add the nmer to the outputList
+            pointsList.append(nmerNew)
+    
+    # convert list into a numpy array and return
+    return np.array(pointsList)
+
+
+
+# Returns a set of PDBs as a list of distance matrices of every NMEr in the PDB. 
+# This creates a training set or a test set for use with ML.
+# All the PDB backbone are broken into NMERS of length subSequenceLength as defined in the params structure.
+# Each Nmer is converted into a distance matrix, which is invariant under rotation and translation 
+# A list of distance matrices is return.
+def loadPDBSetAsDistances(inputDirectory, subSequenceLength, stepSize):
+
+    # get a list of pdb files from the specified directory
+    filelist = glob.glob(os.path.join(inputDirectory, "*.pdb"))
+
+    #create an empty list for all distance we are going to load
+    distList = []
+
+    # loop through each pdb file.         
+    for filepath in filelist:
+ 
+        print("Loading file: ", filepath)
+        # separate out the filename from the filepath       
+        # _, filename= os.path.split(filepath)
+
+        # load the atomic coords into a List - only load the CAs. not bothered about side chains. 
+        points = [ np.array([r[7], r[8], r[9]]) for r in readAtoms(filepath) if r[1] in ['CA']]
+        
+        # loop through each residue position in the input.
+        for i in range(0, len(points) - subSequenceLength, stepSize):
+
+            # extract the nmer in a new array     
+            nmer = cp.copy(points[i:i + subSequenceLength])
+
+            # compute the distance between each combination of pairs
+            distances = np.array([ np.linalg.norm(pair[1] - pair[0] ) for pair in iter.combinations(nmer, 2) ])
+
+            # add the distances to a list -one for each NMer.
+            distList.append( cp.copy( distances ) )
+    
+    
+    # convert list into a numpy array and return
+    return np.array(distList)
+
+
+
+def trajectoryMeasure(infile, params):
+    pass
+
+def trajectoryCluster(referenceFile, params):
+
+    conformations = loadPDBSetAsDistances(params['inputDirectory'], params['subSequenceLength'], params['stepSize'])
+    points = loadPDBSetAligned(referenceFile, params['inputDirectory'], params['subSequenceLength'], params['stepSize'])
+        
+    # Determine the number of clusters using the elbow method
+    wcss = []
+    for i in range(1, params['maxClusters']):
+        kmeans = KMeans(n_clusters=i, init='k-means++', max_iter=300, n_init=10, random_state=0)
+        kmeans.fit(conformations)
+        wcss.append(kmeans.inertia_)
+    plt.plot(range(1, params['maxClusters']), wcss)
+    plt.title('Elbow Method')
+    plt.xlabel('Number of clusters')
+    plt.ylabel('Within Cluster Sum of Squares (WCSS)')
+    plt.show()
+
+    # Determine the optimal number of clusters using silhouette analysis
+    #silhouette_scores = []
+    #for i in range(2, params['maxClusters']):
+    #    kmeans2 = KMeans(n_clusters=i, init='k-means++', max_iter=300, n_init=10, random_state=0)
+    #    kmeans2.fit(conformations)
+    #    labels = kmeans2.labels_
+    #    silhouette_avg = silhouette_score(conformations, labels)
+    #    silhouette_scores.append(silhouette_avg)
+    #plt.plot(range(2, params['maxClusters']), silhouette_scores)
+    #plt.title('Silhouette Analysis')
+    #plt.xlabel('Number of clusters')
+    #plt.ylabel('Silhouette score')
+    #plt.show()
+
+
+    # Choose the number of clusters and perform clustering
+    num_clusters = 5
+    kmeans = KMeans(n_clusters=num_clusters, init='k-means++', max_iter=300, n_init=10, random_state=0)
+    clusters = kmeans.fit_predict(conformations)
+
+    # defines a separation distance equal to the contour length of the first structure
+    separation = np.sum([np.linalg.norm(p - q) for p,q in zip(points[0:], points[1:])])
+
+    # plot out the clusters in separate images for inspection
+    for i in range(num_clusters):
+        p = pv.Plotter()
+        print("Number of conformations in cluster ", i, ": ", len(conformations[clusters == i]))
+        for currNMerIndex, nMer in enumerate(points[clusters == i]):
+            surface_mesh = pv.PolyData(nMer + currNMerIndex * np.array([separation, 0, 0]))
+            p.add_mesh(surface_mesh, render_points_as_spheres=True, point_size=10)
+        p.show()
+        
+    # dump the pickled model to file in the same directory as the PDBS
+    filename = 'kmeans_' + params['modelFilename']
+    with open(os.path.join(params['inputDirectory'], filename), 'wb') as file:
+        pickle.dump(kmeans, file)
+
+    
 
 # takes two sets of coords that must be same length and determines rot matrix that yields closest orientation
 # when both coords are translated to center of mass.   
@@ -424,6 +997,87 @@ def dumpParticularAtoms(infile, params):
         filename = infile[0:-4] + "_" + '_'.join(params['atomsToDump']) + ".pdb"
     print("Writing Atoms")
     writeAtomsToTextFile(newAtoms, filename)
+
+# computes the radius of gyration of a structure, about the principal moments of inertia. 
+def gyrationAnalysis(infile):
+
+    atoms = readAtoms(infile)
+    
+    try:
+        os.mkdir(infile[0:-4])
+    except FileExistsError:
+        pass
+    
+    outfile = os.path.join(infile[0:-4], infile[0:-4] + '.rg')
+    # pdbs in angstroms, convert to nm so answer is in nm.
+    points = 0.1*np.array([ np.array([float(r[7]), float(r[8]), float(r[9])]) for r in atoms ])
+
+    # assume masses all the same
+    #masses = np.array(len(points)*[1.0])
+    masses = np.array([ get_atomic_mass(elementFromAtomName(r[1])) for r in atoms ])
+
+    # returns principal axes
+    pAxes, _ = getPrincipalAxes(points, masses=masses, computeCOM=True)
+
+    # compute coords in principal axes
+    pPoints = CoordsInNewAxes(points, pAxes)
+
+    # compute overall Rg about X, Y, Z axes
+    Rg_all, R_x, R_y, R_z = radius_of_gyration_all(points, masses)
+
+    # compute overall Rg about PX, PY, PZ axes
+    Rg_all_p, R_xp, R_yp, R_zp = radius_of_gyration_all(pPoints, masses)
+
+    # compute min and max coords in directions of principal axes
+    pxmin = np.min([ p[0] for p in pPoints])
+    pxmax = np.max([ p[0] for p in pPoints])
+    pymin = np.min([ p[1] for p in pPoints])
+    pymax = np.max([ p[1] for p in pPoints])
+    pzmin = np.min([ p[2] for p in pPoints])
+    pzmax = np.max([ p[2] for p in pPoints])    
+    
+    pxL = pxmax - pxmin
+    pyL = pymax - pymin
+    pzL = pzmax - pzmin
+    
+    with open(outfile, 'w') as f:
+        f.write('R_gyr_xyz: ' + str(Rg_all) + " " + str(R_x) + " " + str(R_y) + " " + str(R_z) + "\n")
+        f.write('R_gyr_p: ' + str(Rg_all_p) + " " + str(R_xp) + " " + str(R_yp) + " " + str(R_zp) + "\n")
+        f.write('box: ' + str(pxL) + " " + str(pyL) + " " + str(pzL) + "\n")
+
+    return Rg_all, Rg_all_p, [pxL, pyL, pzL]
+
+
+def CoordsInNewAxes(points, axes):
+    return np.array([ np.array([ np.dot(point, axes[:,0]), 
+                                 np.dot(point, axes[:,1]), 
+                                 np.dot(point, axes[:,2]) ] ) for point in points ])
+    
+
+# computes RG about axes
+def radius_of_gyration_all(positions, masses):
+    # Center the molecule at the origin
+    center_of_mass = np.sum(positions * masses[:, np.newaxis], axis=0) / np.sum(masses)
+    positions -= center_of_mass
+
+    px_sq = [ p[0]*p[0] for p in positions]
+    py_sq = [ p[1]*p[1] for p in positions]
+    pz_sq = [ p[2]*p[2] for p in positions]
+
+    Rg_all = np.sqrt( np.sum(masses * np.array([ x + y + z for x, y, z in zip(px_sq,py_sq,pz_sq) ] ) ) / np.sum(masses) )
+    Rg_x = np.sqrt( np.sum(masses * np.array([ y + z for y, z in zip(py_sq, pz_sq) ] ) ) / np.sum(masses) )
+    Rg_y = np.sqrt( np.sum(masses * np.array([ x + z for x, z in zip(px_sq, pz_sq) ] ) ) / np.sum(masses) )
+    Rg_z = np.sqrt( np.sum(masses * np.array([ x + y for x, y in zip(px_sq, py_sq) ] ) ) / np.sum(masses) )
+
+    return Rg_all, Rg_x, Rg_y, Rg_z
+
+
+def get_atomic_mass(element_symbol):
+    """
+    This function takes an element symbol (e.g. 'Na') as input and returns the atomic mass of the corresponding element.
+    """
+    element = PT.elements.symbol(element_symbol)
+    return element.mass
 
 def funkychicken():
     ''' test function for doing 2D correlation'''
@@ -944,34 +1598,41 @@ def getCentreOfMass(listOfVectors):
     com = sumVal/float(len(listOfVectors))
     return np.around(com, 12) # round the floats to 12th DP. cleans up machine precision noise 
 
-# computes the normalised eigen basis of the inertia tensor  
-def getPrincipalAxes(listOfVectors, computeCOM=False):
-
-    iTensor = np.array([[0,0,0], [0,0,0], [0,0,0]])
-
-    COM = np.array([0.0, 0.0, 0.0])
+def inertiaTensor(points, masses='None', computeCOM=False):
+    
+    if masses=='None':
+        masses = np.array(len(points) * [1])
     
     if computeCOM:
-        COM = getCentreOfMass(listOfVectors)
+        center_of_mass = np.sum(points * masses[:, np.newaxis], axis=0) / np.sum(masses)
+        points -= center_of_mass
+    
+    iTensor = np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
 
     # ensure it's in the COM frame default is to assume it is and avoid COM computation.
-    for u in listOfVectors:
-        v = u - COM
-        iTensor[0][0] += v[1]**2 + v[2]**2
-        iTensor[1][1] += v[0]**2 + v[2]**2
-        iTensor[2][2] += v[0]**2 + v[1]**2        
-        iTensor[0][1] += v[0]*v[1]
-        iTensor[0][2] += v[0]*v[2]
-        iTensor[1][2] += v[1]*v[2]
+    for v, m in zip(points, masses):
+        iTensor[0][0] += m * v[1]**2 + v[2]**2
+        iTensor[1][1] += m * v[0]**2 + v[2]**2
+        iTensor[2][2] += m * v[0]**2 + v[1]**2        
+        iTensor[0][1] -= m * v[0]*v[1]
+        iTensor[0][2] -= m * v[0]*v[2]
+        iTensor[1][2] -= m * v[1]*v[2]
     iTensor[1][0] = iTensor[0][1]
     iTensor[2][0] = iTensor[0][2]
     iTensor[2][1] = iTensor[1][2]
 
-    # get the eigen values and vectors of the inertia tensor
-    eig = np.linalg.eig(iTensor)
+    return iTensor
 
-    # return normalized eigen vectors
-    return  np.array([ a/np.linalg.norm(a) for a in eig[1] ]) 
+# computes the normalised eigen basis of the inertia tensor  
+def getPrincipalAxes(listOfVectors, masses='none', computeCOM=False):
+
+    I = inertiaTensor(listOfVectors, masses=masses, computeCOM=computeCOM)
+
+    # get the eigen values and vectors of the inertia tensor
+    eig = np.linalg.eig(I)
+
+    # return normalized eigen vectors and eigenvalues
+    return  np.array([ a/np.linalg.norm(a) for a in eig[1] ]), eig[0]
 
 
 def rotPAboutAxisAtPoint(p, p0, n, angle):
@@ -1141,14 +1802,14 @@ def generateUniformRandomCylinder(params):
      
     return outArray
 
-
+# does the whole analysis for a pdb with lots of frames in it. Currently broken.
 def surfacesFind(infile, params):
     rList = []
     histList = []
     # load each model as separate elements in an array of atoms arrays.
     for i, atoms in enumerate(readModels(infile)):
         print("Processing model ", i)
-        r, hist = surfaceFindAtoms(atoms, params, plotPNGs=False)    
+        r, hist = TubeCOMAnalysis(atoms, params, plotPNGs=False)    
         rList.append( cp.copy(r) )
         histList.append( cp.copy(hist) )
     
@@ -1173,51 +1834,507 @@ def surfacesFind(infile, params):
     fig.colorbar(cax)
     plt.savefig(params['inputfileroot'] + '_rArray.png',dpi=600)
     plt.show()
+
+# scans a input pdb and extracts a sequence.
+# then creates a glob of all the pdbs in a directory that is specified in params.
+# If a pdb in the glob also contains the input sequence then outputs a pdb of just that sequence 
+# as a new file in the output directory that is also specified in params.
+def scanSetForSequence(infile, inputDirectory, outputDirectory):
     
+    import re
+    
+    # read the target sequence
+    seq1 = readSequence(infile, 3)
+
+    # trim the carriage return off the end of the sequence
+    if seq1[-1]=='\n':
+        seq1=seq1[0:-1]
+ 
+    # some sort of check for success 
+    if len(seq1)>0:
+
+        # get a list of pdb files from the specified directory
+        filelist = glob.glob(os.path.join(inputDirectory, "*.pdb"))
+
+        try:
+            os.mkdir(outputDirectory)
+        except FileExistsError:
+            pass
+
+        # loop through each pdb file.         
+        for filepath in filelist:
+            
+            _, filename= os.path.split(filepath)
+            
+            # read the atoms, and extract residue and sequence information. 
+            atoms = readAtoms(filepath)
+            residues = findResidues(atoms)
+            seq2 = internalReadSequence(residues, 3)
+
+            # find all occurences of the target sequence in the new sequence
+            
+            posns = [m.start() for m in re.finditer(seq1, seq2)]
+
+            # if found then output the pdb sequence into a new file
+            for i, curpos in enumerate(posns):
+                # figure out the range of residues that we want to extract from pdb in the residue 
+                # numbering system as defined in the file
+                resRange=(residues[curpos][0], residues[curpos + len(seq1) - 1][0])
+
+                # create the output file name                
+                outfile = filename[0:-4] + "_" + seq1[0:10] + "_" + str(i).zfill(3) + ".pdb"
+                
+                # dump range of residues to a file name
+                writeAtomsToTextFile(atoms, os.path.join(outputDirectory, outfile), resrange=resRange)
     
 
-def surfaceFind(infile, params):
+##### Gauss Bonnet functions #####
+
+# uses the Gauss Bonnet theorem using a website service to isolate the surface atoms for a protein
+# then constructs a surface for that
+def surfaceFindGB(infile, params):
+
+    params['inputfileroot'] = infile[0:-4]
+    try:
+        os.mkdir(params['inputfileroot'])
+    except FileExistsError:
+        pass
+
+    params['outputfileroot'] = os.path.join(infile[0:-4], infile[0:-4])
+    params['infile'] = infile
+
+    print("Loading Atoms from ", infile)
+    atoms = readAtoms(infile)
+        
+    # sets a scale factor for use throughout  
+    try: 
+        rScale = params['rScale']
+    except KeyError:
+        rScale = 0.1 # typically the pdbs are in angstroms so divide distances by 10 to give distances in nm
+        params['rScale'] = rScale
+
+    # Only need to compute the distance from surface for the CAs. 
+    CAPositions = [ atom for atom in atoms if atom[1]=='CA']
+
+    print("Generating rolling COM line for CAs")
+    ComLine = rollingCOM( [ np.array( [ r[7], r[8], r[9] ] ) for r in CAPositions ], 
+                         params['windowSize'], 
+                         params['decimateComLine'])
+
+    # Compute the length of the tube (sub of vector lengths along comline)    
+    TubeLength = np.sum([ np.linalg.norm(b-a) for a, b in  zip(ComLine[0:-1],ComLine[1:]) ])
+    TubeLength = params['rScale'] * TubeLength # scale into nm
+
+    print("GB Surface Analysis")
+    # finds the distances of the CA positions from the surface using the GB method from a website
+    # Submits the raw pdb to a website
+    # already load atoms so don't do it again
+    dist_GB = surfaceFindAtomsGB(CAPositions, atoms, params)
+
+    # process the GB distances
+    tubeRadius, resBreakDown = processDistancesGB(dist_GB, CAPositions, TubeLength, params)
+
+    meanTubeRadius = np.mean(tubeRadius)
+    stdTubeRadius = np.std(tubeRadius)
+    
+    print("GB analysis mean tubeRadius: ", meanTubeRadius )
+    print("GB analysis stddev tubeRadius: ", stdTubeRadius )
+    print("GB analysis res Breakdown: ", resBreakDown )
+    print("GB analysis tubeLength:", TubeLength )
+    
+    return meanTubeRadius, stdTubeRadius, resBreakDown, TubeLength
+
+def surfaceFindAtomsGB(selectedAtoms, atoms, params):
+    
+    # use the gauss bonnet theorem/webservice to identify surface atoms uses a pdb   
+    totalSurface, surfaceInfo = GBSurfaceAnalyse(params)
+
+    # creates a list of atoms considered to be on the surface
+    surfaceAtoms = extractSurfaceAtoms(surfaceInfo, atoms, params)
+
+    # generate a numpy array of the surface atoms and their names
+    surfPoints = np.array([ np.array([ r[7], r[8], r[9] ]) for r in surfaceAtoms])
+    surfNames = [ elementFromAtomName(r[1]) for r in surfaceAtoms]
+
+    # dumps an xyz of the surface atoms
+    saveXYZ( surfPoints, params['outputfileroot'] + '_surface_GB.xyz', surfNames, append=False, comment="GB surface atoms\n")
+
+    # generate a numpy array of the selected atoms whose distances we are interested in
+    interestPoints = np.array([ np.array([ r[7], r[8], r[9] ]) for r in selectedAtoms])
+
+    # dump the global information about the analysis to a file and std out
+    with open(params['outputfileroot'] + '_GB_total.dat', 'w') as f:
+        for key in totalSurface:
+            f.write(key + " " + str(totalSurface[key]))
+    print(totalSurface)
+
+    nbr = params['neighborhood']
+    spacing = params['spacing']
+    if params['livePlot']:
+        filename = None
+    else:
+        filename = params['outputfileroot'] + '_surface_GB.png'
+
+    # gets the distances of selected Atoms from the surface scaled by rScale. Dumps a file surface_GB.png if requested otherwise does an interactive plot
+    # set livePlot=0 in settings file to prevent liveplot and save to file
+    return params['rScale'] * measureDistancesToSurfaceCloud(surfPoints, interestPoints, neighborHood=nbr, spacing=spacing, filename=filename)
+
+
+def extractSurfaceAtoms(surfaceInfo, atoms, params):
+
+    # set up a list of atoms from the residues on the surface
+    surfaceAtoms = []
+
+    # process by residue
+    if params['Method']==2:
+
+        resDict = breakAtomsIntoResidueDicts(atoms)
+    
+        # find the atoms on the surface and build the list
+        for res in surfaceInfo:
+            if res[7]=='o':
+                surfaceAtoms += resDict[int(res[1])]
+
+    # process by atom
+    elif params['Method']==4:
+
+        # find the atoms on the surface and build the list
+        for atom in surfaceInfo:
+            if float(atom[4])>0:
+                surfaceAtoms += [atoms[int(atom[0]) - 1]]
+    
+    return surfaceAtoms
+
+def measureDistancesToSurfaceCloud(surfPoints, allPoints, neighborHood=100, spacing=8.5, filename=None):
+
+    # create a surface mesh from the surface points
+    surface_mesh = pv.PolyData(surfPoints)
+
+    # create mesh with all the residues
+    allPoints_mesh = pv.PolyData(allPoints)
+
+    # generate a surface construction from surface points
+    surface_construct = surface_mesh.reconstruct_surface(nbr_sz=neighborHood, sample_spacing=spacing)
+
+    # compute distance from each point in allPoints to surface_mesh 
+    _ = allPoints_mesh.compute_implicit_distance(surface_construct, inplace=True)
+    _ = surface_mesh.compute_implicit_distance(surface_construct, inplace=True)
+
+    # construct delaunay construction
+    # all_3D = allPoints_mesh.delaunay_3d(alpha=5)
+    
+    if filename:
+        p = pv.Plotter(off_screen=True)
+    else:
+        p = pv.Plotter()
+    #p.add_mesh(surface_mesh, render_points_as_spheres=True, point_size=12, color='green')
+    p.add_mesh(allPoints_mesh, scalars='implicit_distance', render_points_as_spheres=True, point_size=10, cmap='bwr')
+    p.add_mesh(surface_construct, style='wireframe', color='red')
+    # p.add_mesh(all_3D, style='wireframe', color='blue', opacity=.5)
+    if filename:
+        p.show(screenshot=filename)
+    else:
+        p.show()
+    
+    return allPoints_mesh['implicit_distance']
+
+def GBSurfaceAnalyse(params):
+    
+    url = 'http://curie.utmb.edu/cgi-bin/getarea.cgi'
+    pdbData = {'water': params['waterRadius'], 
+            'gradient': 'n',
+            'name': params['inputfileroot'],
+            'email':'chrisjforman@gmail.com',
+            'Method': params['Method']}
+    file = { 'PDBfile': open(params['infile'], 'rb')}
+
+    SAData = requests.post(url=url, data=pdbData, files=file)
+    
+    dataList =[]
+    mode = 'header'
+    with open(params['outputfileroot'] + '_SA.data', 'w') as f:
+        for l in str(SAData.content).split('\\n'):
+            if mode=='header':
+                if 'ATOM  NAME  RESIDUE   AREA/ENERGY' in l:
+                    mode='body'
+
+                if 'Residue      Total   Apolar  Backbone Sidechain Ratio(%) In/Out' in l:
+                    mode='body'
+
+            elif mode=='body':
+                if '------' in l:
+                    mode='tail'
+                else:
+                    f.write(l + '\n')
+                    data = l.split()[1:]
+                    data[-1] = data[-1][0:-11]
+                    dataList.append(data)
+            
+            elif mode=='tail': 
+                data = l.split()[1:]
+                if "APOLAR" in data:
+                    apolarArea = float(data[3][0:-11])
+                elif "POLAR" in data:
+                    polarArea = float(data[3][0:-11])
+                elif "UNKNOW" in data:
+                    unknownArea = float(data[3][0:-11])
+                elif "Total" in data:
+                    try:
+                        totalArea = float(data[3][0:-11])
+                    except ValueError:
+                        pass
+                elif "surface" in data:
+                    surfaceAtoms = int(data[5][0:-11])
+                elif "buried" in data:
+                    buriedAtoms = int(data[5][0:-11])
+                elif "ASP=0" in data:
+                    ASPZeroAtoms = int(data[6][0:-11])
+
+                    
+
+    totals = {'apolarArea': apolarArea,
+              'polarArea': polarArea,
+              'unknownArea': unknownArea,
+              'totalArea': totalArea,
+              'surfaceAtoms': surfaceAtoms,
+              'buriedAtoms': buriedAtoms,
+              'ASPZeroAtoms': ASPZeroAtoms}
+    
+    print('Response from website: ', SAData)
+
+    return totals, dataList
+
+def processDistancesGB(distData, selectedAtoms, TubeLength, params):
+
+    # find the deepest most point. It's the zero ref now.
+    offset = params['surfacePolarity'] * max(distData)
+    params['offset'] = offset
+    distData = params['surfacePolarity'] * distData
+    distOffset = distData - offset
+
+    fig = plt.figure()
+    # Plot the distances as a straight graph against residue number. Color with style for residues
+    for res, style in params['resOfInterest'].items():
+        if res=='ALL':
+            ds = distData
+            dr = [ r[5] for r in selectedAtoms ]
+        else:
+            # get the distance for current residue
+            ds = [ d for d, r in zip( distData, selectedAtoms ) if r[3]==res ]
+            dr = [ r[5] for r in selectedAtoms if r[3]==res ]
+            
+        # plot the current histogram out with the current style information
+        plt.plot( dr, ds, label=res, 
+                  markeredgewidth=style['markeredgewidth'],
+                  markeredgecolor=style['markeredgecolor'],
+                  markerfacecolor=style['markerfacecolor'],
+                  marker=style['marker'],
+                  linestyle='none',
+                  color=style['linecolor'],
+                  zorder=style['zorder'] )
+
+    try:
+        plt.legend(loc=params['legLocn'])
+    except KeyError:
+        plt.legend(loc='lower right')
+    plt.title("Distance of residues from ref surface (GB)")
+    plt.xlabel("Residue Number")
+    plt.ylabel("Distance (nm)")
+    plt.savefig(params["outputfileroot"] + '_GB_distances.png', dpi=600)
+    plt.show()
+
+    
+    # using kernel density estimate to find the edge of the tube at each radius
+    print("Using Kernel Density Estimate to find tube radius")
+    tubeOuterRadius, tubeInnerRadius = kde(distOffset, params, 'GB') 
+
+    # Begin residue based analysis
+    print("Computing Unique residue distribution")
+
+    # generate a list of residues names in order
+    resListFull = [ atom[3] for atom in selectedAtoms ] 
+
+    # if requested plot the histogram of all the residues in the sequence.
+    if params['reqFullResHistogram']:
+        # create a figure
+        fig = plt.figure()
+        labels, counts = np.unique(resListFull, return_counts=True)
+        plt.bar(labels, counts, align='center')
+        for i, count in enumerate(counts):
+            plt.text(i, count + params['textLabelVOffset'], count, ha = 'center')
+        plt.gca().set_xticks(labels)
+        plt.title("Residue Distribution")
+        plt.xlabel("Residues")
+        plt.ylabel("Frequency")
+        plt.savefig(params["outputfileroot"] + '_GB_ResFreq.png', dpi=600)
+        plt.show()
+
+    print("Computing Radial Density Profile by Residue Type")
+ 
+    # set up the figure
+    fig = plt.figure()
+    
+    # generate the radial density by Residue plots
+    max_l_array = plotRadialDensityByResidueGB(fig, distOffset, resListFull, TubeLength, params, 'GB')
+
+    # dump a text file with the max residue distance information
+    writeTextFile(max_l_array, params["outputfileroot"] + '_GB_mean_max_perResType.info')
+    
+    plt.savefig(params['outputfileroot'] + '_GB_radial_distribution.png', dpi=600)
+
+    plt.show()
+        
+    return tubeOuterRadius, max_l_array
+
+# plot the radial density
+def plotRadialDensityByResidueGB(fig, d_all, resListFull, tubeLength, params, label):
+    
+    #set the current figure
+    plt.figure(fig.number)
+    
+    # compute the histogram for the whole distribution using autobins. Use these bins for all the sub populations. 
+    all_hist, all_bin_edges = np.histogram(d_all, bins='auto', density=False)
+
+    # compute the centers of the bins for plotting purposes. These are not used for anything else except plotting.  
+    bin_centers = [ (b1+b2)/2 for b1, b2 in zip(all_bin_edges[0:-1], all_bin_edges[1:])]
+        
+    # compute the circular area associated with each bin and multiply by the length of the tube to get correct volume density 
+    # We have computed the total number of residues a distance from the center. 
+    # We would expect this to be higher for a larger radius as you can get more residues in, so must correct for this.     
+    # if it's a spherical shell we are using then compute bin volume as spherical shell
+    if params['globular']:
+        # in a spherical case (globular) each bin is associated with a spherical shell of volume outer sphere - inner sphere 
+        binVolumes = np.array([  ( 4.0 / 3.0 ) * np.pi * (b2 * b2 * b2 - b1 * b1 * b1) for b1, b2, in zip(all_bin_edges[0:-1], all_bin_edges[1:])])
+    else:
+    
+        binVolumes = tubeLength * np.array([ np.pi * (b2 * b2 - b1 * b1) for b1, b2, in zip(all_bin_edges[0:-1], all_bin_edges[1:])])
+    
+    # set up array to hold some output data
+    max_l_array = ["Res, max_dist, mean_dist\n"]
+
+    # loop through the requested residues of interest and filter out sub populations
+    for res, style in params['resOfInterest'].items():
+        
+        # if a style for all is requested then plot it out
+        if res=='ALL':
+            # use the previously calculated values for all 
+            hist = all_hist
+            numResidues = len(d_all)
+            max_l = res + ", " + str(np.max(d_all)) + ", " + str(np.mean(d_all)) + '\n'
+        else:
+            # get the distance for current residue
+            ds = [ d for d, curRes in zip(d_all, resListFull) if curRes==res ]
+            
+            # compute histogram for current residue using the same bins as we got for the whole distribution.
+            hist, _ = np.histogram(ds, bins=all_bin_edges)
+            
+            # count the number of residues in the sub set
+            numResidues = len(ds)
+            
+            # generate an information print out string
+            max_l = res + ", " + str(np.max(ds)) + ", " + str(np.mean(ds)) + '\n'
+        
+        # print out print statement for current sub set
+        # print(max_l)
+        max_l_array.append(max_l)
+        
+        # scale the residue count based on the area or volume associated with bin to get the actual radial density profile. 
+        hist = [ h/V for h, V in zip(hist, binVolumes) ]
+
+        # choose whether to normalize the distribution, showing the fractional density of each population in various bins 
+        # or absolute density of each type of residue
+        if params['normalise']:
+            hist = [ h/numResidues for h in hist]
+        
+        # plot the current histogram out with the current style information
+        plt.plot( bin_centers + params['offset'], hist, label=res, 
+                  markeredgewidth=style['markeredgewidth'],
+                  markeredgecolor=style['markeredgecolor'],
+                  markerfacecolor=style['markerfacecolor'],
+                  marker=style['marker'],
+                  linestyle=style['linestyle'],
+                  color=style['linecolor'],
+                  zorder=style['zorder'] )
+ 
+    try:
+        plt.legend(loc=params['legLocn'])
+    except KeyError:
+        plt.legend(loc='upper right')
+    
+    plt.xlabel('Distance from GB ref surface (nm)')
+
+    if params['normalise']:        
+        plt.ylabel('Fractional Radial Density (fraction of class/unit volume)')
+    else:
+        plt.ylabel('Radial Density (residue count/unit volume)')
+        
+    return max_l_array
+
+##### TUBE COM Method functions ######
+
+# processes a pdb to find the tube radius and radial distribution of residues
+# uses two methods: the centre of mass line and gauss bonnet surface.
+# Returns all the shit we could want to know about a spidroin PDB
+def surfaceFindTube(infile, params):
 
     # debugging test
     # testComputeDistPoints(params)
 
-    # load atoms
+    params['inputfileroot'] = infile[0:-4]
     try:
-        print("Attempting to over ride input file using config json")
-        infile = params["inputfileroot"] + '.pdb'
-        
-    except KeyError:
-        print("No input file found in json")
-        params['inputfileroot'] = infile[0:-4]
+        os.mkdir(params['inputfileroot'])
+    except FileExistsError:
+        pass
 
-    # building test systems or loading data.        
+    params['outputfileroot'] = os.path.join(infile[0:-4], infile[0:-4])
+    params['infile'] = infile
+
+    # can build a test system or load data.
     try:
         if params["uniformCylinder"]==1:
             print("Generating random uniformly distributed points in a cylindrical shape")
             atoms = generateUniformRandomCylinder(params)
+
+            # sort by z to get a sensible line of COMS
+            atoms = sorted(atoms, key = lambda x: x[9])
+        
         elif params["uniformCylinder"]==2:
             atoms = generateUniformRandomCylinderVaryRad(params)
             
-        # sort by z to get a sensible line of COMS
-        atoms = sorted(atoms, key = lambda x: x[9])
-            
-    except KeyError:
+            # sort by z to get a sensible line of COMS
+            atoms = sorted(atoms, key = lambda x: x[9])
+
+        elif params["uniformCylinder"]==0:
             print("Loading Atoms from ", infile)
             atoms = readAtoms(infile)
 
-    surfaceFindAtoms(atoms, params)
+    except KeyError:
+            print("Loading Atoms from ", infile)
+            atoms = readAtoms(infile)
+        
+    # sets a scale factor for use throughout  
+    try: 
+        rScale = params['rScale']
+    except KeyError:
+        rScale = 0.1 # typically the pdbs are in angstroms so divide distances by 10 to give distances in nm
+        params['rScale'] = rScale
 
-def surfaceFindAtoms(atoms, params, plotPNGs=True):
+    selectedAtoms = [ atom for atom in atoms if atom[1]=='CA']
+            
+    print("Tube Analysis")
+    # finds the distances of the selectedAtoms from the surface using the TUBE method 
+    dist_tube, tubeLength = surfaceFindAtomsTube(selectedAtoms, params)
 
-    # if required filter atoms to CAs
-    if params['CAsOnly']:
-        print("Filtering CAs")
-        selectedAtoms = [ atom for atom in atoms if atom[1]=='CA']
-        Points = [ np.array([atom[7], atom[8], atom[9]]) for atom in selectedAtoms ] 
-    else:
-        print("Using every atom")
-        selectedAtoms = [ atom for atom in atoms ]
-        Points = [ np.array([atom[7], atom[8], atom[9]]) for atom in selectedAtoms]
+    # process the tube distances
+    processDistancesTubes(dist_tube, atoms, selectedAtoms, tubeLength, params)
+
+
+# uses the center of mass tube method to find the distance of the selectedAtoms from the center line
+# returns the distance array information and the tubelength. sets the rScale in params if it's not already set
+def surfaceFindAtomsTube(selectedAtoms, params):
+
+    # extract the numpy array of points of interest from selectedAtoms
+    Points = [ np.array([atom[7], atom[8], atom[9]]) for atom in selectedAtoms ] 
 
     # move to center of mass
     print("Moving to Center of Mass")
@@ -1225,23 +2342,26 @@ def surfaceFindAtoms(atoms, params, plotPNGs=True):
     PointsCom = [ v - COM for v in Points]
 
     # dump the points in the COM frame as an XYZ
-    saveXYZ(PointsCom, params["inputfileroot"] + params['PointsComFilename'], len(PointsCom) * [params['PointsAtomName']])
-
+    saveXYZ(PointsCom, 
+            params["outputfileroot"] + "_Tube_CAs.xyz",
+            len(PointsCom) * [params['PointsAtomName']])
     
     # figure out the center of mass curve. Single point if globular.
     try:
         if params['globular']: # computes distance of each point from center of mass if array of length 1.
             ComLine  = np.array([[0.0, 0.0, 0.0]])
+            TubeLength = 0.0
         else:
             # weird hack so if globular is not present only have rollingCom called in one place. 
             params['forceKeyError']
     except KeyError:
         params['globular'] = 0
+
         print("Generating rolling COM line")
-        ComLine = rollingCOM(PointsCom, params['windowSize'], params['decimateComLine'])
+        ComLine = rollingCOM(Points, params['windowSize'], params['decimateComLine'])
 
         # Compute the length of the tube (sub of vector lengths along comline)    
-        TubeLength = np.sum([ np.linalg.norm(b-a) for a, b in  zip(ComLine[0:-1],ComLine[1:]) ])
+        TubeLength = params['rScale'] * np.sum([ np.linalg.norm(b-a) for a, b in  zip(ComLine[0:-1],ComLine[1:]) ])
     
         print("TotalTubeLength: ", TubeLength )
         print("Scaling end vectors by factor ", params['ScaleEndVectors'])
@@ -1250,18 +2370,12 @@ def surfaceFindAtoms(atoms, params, plotPNGs=True):
         ComLine[-1] = params['ScaleEndVectors'] * (ComLine[-1] - ComLine[-2]) + ComLine[-2]
     
     # dump the comLine as an xyz
-    saveXYZ(ComLine, params["inputfileroot"] + params['comLineFilename'], len(ComLine) * [params['comLineAtomName']])
-    
-    # compute a scale factor for the radial distance data 
-    try: 
-        rScale = params['radialScale']
-    except KeyError:
-        rScale = 0.1 # typically the pdbs are in angstroms so distances by 10 to give distances in nm
-    
-    # Scale the Tube length
-    TubeLength = TubeLength * rScale
-    
-    print("Computing Distances of CAs from Com line segments. Distances scaled by ", rScale)
+    saveXYZ(ComLine, 
+            params["outputfileroot"] + "_" + str(params['windowSize']) + "_" + str(params['decimateComLine']) + "_Tube_COM.xyz",
+            len(ComLine) * [params['comLineAtomName']])
+            
+       
+    print("Computing Distances of CAs from Com line segments. Distances scaled by ", params['rScale'])
     # compute the distance of each CA from the COM Line compute distance of each CA from every comline segment and pick the shortest one.
     distLines = []
     distData = []
@@ -1269,53 +2383,67 @@ def surfaceFindAtoms(atoms, params, plotPNGs=True):
         
     # output distance of each atom from segment chain indexed by resnum, resname, atom type, and segment index
     # if there is only one point testPoints compute distance from the point  
-    for atom, d in zip(selectedAtoms, computeDistOfPointsFromTestPoints(PointsCom, ComLine)):
+    for atom, d in zip(selectedAtoms, computeDistOfPointsFromTestPoints(Points, ComLine)):
         
         # capture distance from central line data for further analysis.
         # also make a note of which segment distance is measured from
-        distData.append((atom[3], d[1] * rScale, d[0]))
+        distData.append((atom[3], d[1] * params['rScale'], d[0]))
         
         # output distance information on each CA
-        distLines.append(str(atom[3]) + ", " + str(atom[5]) + ", " + str(atom[1]) + ", " + str(d[0]) + ", " + str(d[1] * rScale) + "\n")
+        distLines.append(str(atom[3]) + ", " + str(atom[5]) + ", " + str(atom[1]) + ", " + str(d[0]) + ", " + str(d[1] * params['rScale']) + "\n")
             
         # output atom name based on segment. If we run out of names, then start the atom name sequence again. 
         # Just to color different regions for demonstration purposes. 
         atomNames.append(params['atomNames'][d[0] % len(params['atomNames'])])
         
     # dump a text file with the residue distance information
-    writeTextFile(distLines, params["inputfileroot"] + '.dist')
+    writeTextFile(distLines, params["outputfileroot"] + '_Tube.dist')
         
     # dump an xyz showing which atoms belongs to which segment using centered data.
-    saveXYZ( PointsCom, params["inputfileroot"] + "_segments.xyz", atomNames )
+    saveXYZ( Points, params["outputfileroot"] + "_Tube_segments.xyz", atomNames )
 
-    # If request plot the distances as a straight graph against residue number
-    if plotPNGs and params['plotDistances']:
-        # create a figure
-        fig = plt.figure()
-        plt.plot([ d[1] for d in distData], 'b+')
-        plt.title("Distance of residues from COM Line")
-        plt.xlabel("Residue Number")
-        plt.ylabel("Distance (nm)")
-        plt.savefig(params["inputfileroot"] + '_distances.png', dpi=600)
-        plt.show()
+    # function to output distance in standard way 
+    return distData, TubeLength
 
+
+# takes the distData format and plots out the results with some handy analysis
+# distData [ (atom[name], dist, atom number)
+def processDistancesTubes(distData, atoms, selectedAtoms, TubeLength, params, plotPNGs=True):
+
+    fig = plt.figure()
+    # Plot the distances as a straight graph against residue number. Color with style for residues
+    for res, style in params['resOfInterest'].items():
+        if res=='ALL':
+            ds = [ d[1] for d in distData]
+            dr = [ r[5] for r in selectedAtoms ]
+        else:
+            # get the distance for current residue
+            ds = [ d[1] for d in distData if d[0]==res ]
+            dr = [ r[5] for r in selectedAtoms if r[3]==res ]
+            
+        # plot the current histogram out with the current style information
+        plt.plot( dr, ds, label=res, 
+                  markeredgewidth=style['markeredgewidth'],
+                  markeredgecolor=style['markeredgecolor'],
+                  markerfacecolor=style['markerfacecolor'],
+                  marker=style['marker'],
+                  linestyle='none',
+                  color=style['linecolor'],
+                  zorder=style['zorder'] )
+
+    try:
+        plt.legend(loc=params['legLocn'])
+    except KeyError:
+        plt.legend(loc='lower right')
+    plt.title("Absolute distance of residue CAs from COM line")
+    plt.xlabel("Residue Number")
+    plt.ylabel("Distance (nm)")
+    plt.savefig(params["outputfileroot"] + '_Tube_distances.png', dpi=600)
+    plt.show()
     
-    #print("Smoothing Distance data")
-    #if params['smoothSegInfo']:
-    #    smoothDist = minEnergySmooth([d[1] for d in distData[0::5]], params)
-    #    fig = plt.figure()
-    #    plt.plot([ d[1] for d in distData], 'b+')
-    #    plt.plot([ 5 * d for d in range(0, len(smoothDist))], smoothDist, 'rx')
-    #    plt.title("Distance of residues from COM Line")
-    #    plt.xlabel("Residue Number")
-    #    plt.ylabel("Distance (nm)")
-    #    plt.savefig(params["inputfileroot"] + '_smoothDistances.png', dpi=600)
-    #    plt.show()
-
     # using kernel density estimate to find the edge of the tube at each radius
-    if params['scaleRadiusByTubeRadius']=='kde':
-        print("Using Kernel Density Estimate to find tube radius")
-        tubeOuterRadius, tubeInnerRadius = kde([d[1] for d in distData], params) 
+    print("Using Kernel Density Estimate to find tube radius")
+    tubeOuterRadius, tubeInnerRadius = kde([d[1] for d in distData], params, 'Tube') 
 
     print("Analysing mean and max radius by segment")
     # compute the max and mean radius of each segment.
@@ -1326,10 +2454,10 @@ def surfaceFindAtoms(atoms, params, plotPNGs=True):
     
     # dump the segment info to file
     writeTextFile([ str(i) + ", " + str(sVals['mean']) + ", " + str(sVals['max']) + "\n" for i, sVals in segInfo.items()],
-                  params["inputfileroot"] + '.segInfo')
+                  params["outputfileroot"] + '_Tube.segInfo')
     
     # If requested plot the segment means and maxes as graph against residue number
-    if plotPNGs and params['plotSegments']:
+    if params['plotSegments']:
         # create a figure
         fig = plt.figure()
         plt.plot([ d[1] for d in distData], 'b+')
@@ -1341,7 +2469,7 @@ def surfaceFindAtoms(atoms, params, plotPNGs=True):
         plt.title("Distance of residues from COM Line with Segment means and maxes")
         plt.xlabel("Residue Number")
         plt.ylabel("Distance (nm)")
-        plt.savefig(params["inputfileroot"] + '_SegDistances.png', dpi=600)
+        plt.savefig(params["inputfileroot"] + '_Tube_SegDistances.png', dpi=600)
         plt.show()
 
     # Scale distances by segment if requested using the segment info in distData
@@ -1351,38 +2479,79 @@ def surfaceFindAtoms(atoms, params, plotPNGs=True):
         elif params['scaleRadiusByTubeRadius']=='max':
             distDataScaled = [ (d[0], d[1]/segInfo[d[2]]['max'], d[2]) for d in distData ]
         elif params['scaleRadiusByTubeRadius']=='kde':
-            distDataScaled = [ (d[0], d[1]/oRad, d[2]) for d,oRad in zip(distData, tubeOuterRadius) ]
+            distDataScaled = [ (d[0], d[1]/oRad, d[2]) for d, oRad in zip(distData, tubeOuterRadius) ]
+        else:
+            distDataScaled = distData
     except KeyError:
         distDataScaled = distData 
 
     try:    
         # if we are using the test cylinder then create a sanity check based on the actual radius
         if params['uniformCylinder']==1:
-            distDataScaledActual = [ (d[0], d[1]/(rScale * params['outerRadius']), d[2]) for d in distData ]
+            distDataScaledActual = [ (d[0], d[1]/(params['rScale'] * params['outerRadius']), d[2]) for d in distData ]
         
         if params['uniformCylinder']==2:
-            distDataScaledActual = [ (d[0], d[1]/(rScale * atom[10]), d[2]) for d,atom in zip(distData, atoms) ]
+            distDataScaledActual = [ (d[0], d[1]/(params['rScale'] * atom[10]), d[2]) for d,atom in zip(distData, atoms) ]
     except KeyError:
         pass 
     
     # dump a text file with the residue distance information scaled by segment
-    writeTextFile([str(d[1]) for d in distDataScaled], params["inputfileroot"] + '.SegScaledDist')
+    writeTextFile([str(d[1]) for d in distDataScaled], params["outputfileroot"] + '_Tube.SegScaledDist')
     
     # If requested plot the scaled distances as a straight graph against residue number
-    if plotPNGs and params['plotDistances']:
-        # create a figure
-        fig = plt.figure()
-        plt.plot([ d[1] for d in distDataScaled], 'b+')
-        try:
-            if not params['uniformCylinder']==0:
-                plt.plot([ d[1] for d in distDataScaledActual], 'rx')
-        except KeyError:
-            pass
-        plt.title("Segment Scaled Distance of residues from COM Line")
-        plt.xlabel("Residue Number")
-        plt.ylabel("Distance (Tube Radius Units)")
-        plt.savefig(params["inputfileroot"] + '_TubeScaledDistances.png', dpi=600)
-        plt.show()
+    # create a figure
+    fig = plt.figure()
+    plt.plot([ d[1] for d in distDataScaled], 'b+')
+    try:
+        if not params['uniformCylinder']==0:
+            plt.plot([ d[1] for d in distDataScaledActual], 'rx')
+    except KeyError:
+        pass
+    plt.title("Segment Scaled Distance of residues from COM Line")
+    plt.xlabel("Residue Number")
+    plt.ylabel("Distance (Tube Radius Units)")
+    plt.savefig(params["inputfileroot"] + '_Tube_ScaledDistances.png', dpi=600)
+    plt.show()
+
+
+    fig = plt.figure()
+    # Plot the distances as a straight graph against residue number. Color with style for residues
+    for res, style in params['resOfInterest'].items():
+        if res=='ALL':
+            ds = [ d[1] for d in distDataScaled]
+            dr = [ r[5] for r in selectedAtoms ]
+        else:
+            # get the distance for current residue
+            ds = [ d[1] for d in distDataScaled if d[0]==res ]
+            dr = [ r[5] for r in selectedAtoms if r[3]==res ]
+            
+        # plot the current histogram out with the current style information
+        plt.plot( dr, ds, label=res, 
+                  markeredgewidth=style['markeredgewidth'],
+                  markeredgecolor=style['markeredgecolor'],
+                  markerfacecolor=style['markerfacecolor'],
+                  marker=style['marker'],
+                  linestyle='none',
+                  color=style['linecolor'],
+                  zorder=style['zorder'] )
+
+    # over plot the distDataScaledActual if we are messing with a model.
+    try:
+        if not params['uniformCylinder']==0:
+            plt.plot([ d[1] for d in distDataScaledActual], 'rx')
+    except KeyError:
+        pass
+
+    try:
+        plt.legend(loc=params['legLocn'])
+    except KeyError:
+        plt.legend(loc='lower right')
+    plt.title("Segment Scaled Distance of residues from COM Line")
+    plt.xlabel("Residue Number")
+    plt.ylabel("Distance (nm)")
+    plt.savefig(params["outputfileroot"] + '_Tube_distances.png', dpi=600)
+    plt.show()
+
 
     # Begin residue based analysis
     print("Computing Unique residue distribution")
@@ -1391,7 +2560,7 @@ def surfaceFindAtoms(atoms, params, plotPNGs=True):
     resListFull = [ atom[3] for atom in selectedAtoms ] 
 
     # if requested plot the histogram of all the residues in the sequence.
-    if plotPNGs and params['reqFullResHistogram']:
+    if params['reqFullResHistogram']:
         # create a figure
         fig = plt.figure()
         labels, counts = np.unique(resListFull, return_counts=True)
@@ -1402,19 +2571,18 @@ def surfaceFindAtoms(atoms, params, plotPNGs=True):
         plt.title("Residue Distribution")
         plt.xlabel("Residues")
         plt.ylabel("Frequency")
-        plt.savefig(params["inputfileroot"] + '_ResFreq.png', dpi=600)
+        plt.savefig(params["outputfileroot"] + '_Tube_ResFreq.png', dpi=600)
         plt.show()
 
     print("Computing Radial Density Profile by Residue Type")
-
-    
+ 
     # set up the figure
     fig = plt.figure()
 
-    max_l_array = plotRadialDensityByResidue(fig, distDataScaled, TubeLength, params)
+    max_l_array = plotRadialDensityByResidueTube(fig, distDataScaled, TubeLength, params, '_Tube_')
 
     # dump a text file with the max residue distance information
-    writeTextFile(max_l_array, params["inputfileroot"] + 'mean_max_perResType.info')
+    writeTextFile(max_l_array, params["outputfileroot"] + '_Tube_mean_max_perResType.info')
     
     # over plot on same graph as fig
     try:
@@ -1423,13 +2591,13 @@ def surfaceFindAtoms(atoms, params, plotPNGs=True):
             params['resOfInterest']['TEST']['marker']='o'
             params['resOfInterest']['TEST']['linecolor']='#0066ec'
             params['resOfInterest']['TEST']['markeredgecolor']='#0066ec'
-            plotRadialDensityByResidue(fig, distDataScaledActual, TubeLength, params)
+            plotRadialDensityByResidueTube(fig, distDataScaledActual, TubeLength, params, '_Test_')
             _, xmax = fig.gca().get_xlim()
             plt.xlim([0.0, xmax])
     except KeyError:
         pass
 
-    plt.savefig(params['inputfileroot'] + '_radial_distribution.png', dpi=600)
+    plt.savefig(params['outputfileroot'] + '_Tube_radial_distribution.png', dpi=600)
 
     if plotPNGs:
         plt.show()
@@ -1497,7 +2665,7 @@ def energy(h, x, surface, params):
 
     return pot
     
-def plotRadialDensityByResidue(fig, distData, tubeLength, params):
+def plotRadialDensityByResidueTube(fig, distData, tubeLength, params, label):
     
     #set the current figure
     plt.figure(fig.number)
@@ -1578,13 +2746,10 @@ def plotRadialDensityByResidue(fig, distData, tubeLength, params):
         plt.legend(loc=params['legLocn'])
     except KeyError:
         plt.legend(loc='upper right')
-    xlabel = ''       
-    if params['globular']:
-        xlabel = 'Distance from COM'
-    else:
-        xlabel = 'Distance from axis'
+    
+    xlabel = 'Distance from COM Line'
 
-    if params['scaleRadiusByTubeRadius']=='norm':
+    if params['scaleRadiusByTubeRadius']=='normal':
         plt.xlabel(xlabel + " (nm)")
     else:
         plt.xlabel(xlabel + " (tube radius units)")
@@ -1609,7 +2774,7 @@ def analyseRadiusBySegment(distData, params):
         
     return segInfo  
 
-def kde(data, params):
+def kde(data, params, label):
 
     numPoints = len(data)
     xPoints = np.linspace(0, numPoints - 1, num=numPoints)
@@ -1632,7 +2797,7 @@ def kde(data, params):
     # interpolating yPoints
     yIndices = findYPoints(f, xPoints, threshold)
     radVals = [ [ y * (ymax - ymin)/numPoints for y in ySubList] for ySubList in yIndices] 
-    print(radVals)
+    # print(radVals)
     radVals1 = [ radValPair[0] for radValPair in radVals]
     radVals2 = [ radValPair[1] for radValPair in radVals]
 
@@ -1653,7 +2818,7 @@ def kde(data, params):
     ax.autoscale(False)
     ax.scatter(xPoints, radVals1, zorder=1)
     ax.scatter(xPoints, radVals2, zorder=1)
-    plt.savefig(params['inputfileroot'] + '_kde_TubeRadius.png', dpi=600)
+    plt.savefig(params['outputfileroot'] + '_kde_' + label + '_TubeRadius.png', dpi=600)
     plt.show()
     
     return radVals2, radVals1
@@ -3503,8 +4668,9 @@ def concatenatePdbs(infile, params):
         writeTextFile(lines, params['outputFile'], append=True)
         writeTextFile(['TER\n'], params['outputFile'], append=True)
         writeTextFile(['ENDMDL\n'], params['outputFile'], append=True)
-        
-def ramachandrans(infile, configFile):
+
+       
+def ramachandrans( params ):
     params = loadJson(configFile)
     
     # create a handle to a matplot lib figure of the right size
@@ -3600,19 +4766,157 @@ def ramachandrans(infile, configFile):
     plt.savefig(params['pngName'], dpi=600)
     plt.show()
 
+def ramaDensity(infile, params):
     
-def ramachandran(infile, configFile):
-    
-    params = loadJson(configFile)
-
     atoms = readAllAtoms(infile)
     
-    _, _, phi, psi= generatePhiPsi(atoms, infile[:-4] + '.rama')
+    try:
+        os.mkdir(infile[:-4])
+    except FileExistsError:
+        pass
+
+    _, _, phi, psi= generatePhiPsi(atoms, os.path.join(infile[:-4], infile[:-4] + '.rama_d'))
+    xmin, xmax = -180, 180
+    ymin, ymax = -180, 180
+    xx, yy = np.mgrid[xmin:xmax:360j, ymin:ymax:360j]
+    positions = np.vstack([xx.ravel(), yy.ravel()])
+    values = np.vstack([phi, psi])
+    kernel = st.gaussian_kde(values)
+    f = np.reshape(kernel(positions).T, xx.shape)
+
+    fig = plt.figure()
+    ax = fig.gca()
+    ax.set_xlim(xmin, xmax)
+    ax.set_ylim(ymin, ymax)
+    # Contourf plot
+    cfset = ax.contourf(xx, yy, f, cmap='Blues')
+    cset = ax.contour(xx, yy, f, colors='k')
+    # Label plot
+    ax.clabel(cset, inline=1, fontsize=10)
+    ax.set_xlabel('Phi')
+    ax.set_ylabel('Psi')
+    plt.show()
+
+    import seaborn as sns
+    #plt.figure()
+    sns.displot(x=phi, y=psi, kind='kde', cmap='Blues')
+    plt.show()
+    #ax.patch.set_facecolor('white')
+    #ax.collections[0].set_alpha(0)
+    #ax.set_xlabel('$Y_1$', fontsize = 15)
+    #ax.set_ylabel('$Y_0$', fontsize = 15)
+    #plt.xlim(xmin, xmax)
+    #plt.ylim(ymin, ymax)
+    #plt.plot([xmin, xmax], [ymin, ymax], color = "black", linewidth = 1)
+    #plt.hist2d(phi, psi,bins=params['bins'], cmap=plt.cm.jet)
+    #plt.colorbar()
+    #plt.show()
     
-    createRamaPlot(phi, psi, infile[:-4]+'.png', params)
+    #createRamaDensityPlot(heatMap, os.path.join(infile[:-4], infile[:-4] + '.rama_d'))
 
 
-def createRamaPlot(phi, psi, filename, settings):
+def createRamaDensityPlot(heatMap, filename, settings):
+    plt.figure(figsize=(settings['figsizex'], settings['figsizey']))
+    plt.plot(heatMap, settings['plotMarker'])
+    plt.xlabel(settings['xlabel'], fontsize=settings['labelfontsize'])
+    plt.ylabel(settings['ylabel'], fontsize=settings['labelfontsize'])
+    title = settings['title']
+    try:
+        if settings['includeFilenameInTitle']:
+            title = settings['title'] + " " + filename 
+    except KeyError:
+        pass
+    plt.title(title, fontsize=settings['titlefontsize'])
+    plt.xlim([settings['phiMin'], settings['phiMax']])
+    plt.ylim([settings['psiMin'], settings['psiMax']])
+    plt.xticks(fontsize=settings['tickfontsize'])
+    plt.yticks(fontsize=settings['tickfontsize'])
+    try:
+        outFilename = settings['pngName']
+    except KeyError:
+        outFilename = filename
+    plt.savefig(outFilename)
+    plt.show()
+    return
+
+def AllFilesRamachandran( params ):
+    for infile in glob.glob( '*.pdb'):
+        ramachandran( infile, params )
+    
+def ramachandran(infile, params):
+    print("Reading file ", infile)
+    atoms = readAllAtoms(infile)
+    
+    print("Loading data", infile[:-4] + 'rama')
+    resids, resnames, phi, psi= generatePhiPsi(atoms, infile[:-4] + '.rama')
+    
+    print("create rama plot")
+    createRamaPlot(resids, resnames, phi, psi, infile[:-4]+'.png', params)
+
+
+def createRamaPlot(resIds, resNames, phi, psi, pngFilename, settings):
+
+    # select range to plot
+    endRes = settings['endRes']
+    startRes = settings['startRes']
+    
+    # cope with -ve index value for endRes index
+    if endRes<0:
+        endRes = resIds[endRes]
+
+    # arrays to store info for legend
+    legendLabels = []
+    legendHandles = []
+    
+    # loop through each subset and extract the requested information
+    # subset is a dictionary whose keys are a res name to plot, and whose entries are the plotmarker info
+    for resName in settings['subsets']:
+            style = settings['subsets'][resName]
+
+            # figure out indices that match the specified conditions
+            if resName=='All':
+                plotIndices = [ i for i in range(len(phi)) if ( resIds[i]>=startRes and resIds[i]<=endRes ) ]
+            else:
+                plotIndices = [ i for i in range(len(phi)) if ( resNames[i]==resName and resIds[i]>=startRes and resIds[i]<=endRes ) ]
+            
+            
+            # plot the phi, psi points for the current subPlot                
+            pHandle, = plt.plot(np.array(phi)[plotIndices], 
+                                np.array(psi)[plotIndices], 
+                                markeredgewidth=int(style['markeredgewidth']),
+                                markerfacecolor=style['markerfacecolor'], 
+                                markeredgecolor=style['markeredgecolor'],
+                                marker=style['marker'], 
+                                markersize=style['markersize'],
+                                linestyle=style['linestyle'],
+                                zorder=style['zorder'])
+            
+            
+            legendLabels.append(resName)
+            legendHandles.append(pHandle)
+ 
+    if settings['includeLegend']==1:
+        plt.legend(legendHandles, 
+                   legendLabels, 
+                   loc=settings['legendLoc'], 
+                   fontsize=settings['legendFontSize'], 
+                   frameon=False)
+            
+    # set global params and behaviour for the figure
+    plt.xlabel(settings['xlabel'], fontsize=settings['labelfontsize'])
+    plt.ylabel(settings['ylabel'], fontsize=settings['labelfontsize'])
+    title = settings['title'] + " " + pngFilename
+    plt.title(title, fontsize=settings['titlefontsize'])
+    plt.xticks(settings['xticks'], fontsize=settings['tickfontsize'])
+    plt.yticks(settings['yticks'], fontsize=settings['tickfontsize'])
+    plt.xlim([settings['phiMin'], settings['phiMax']])
+    plt.ylim([settings['psiMin'], settings['psiMax']])
+
+    plt.savefig(pngFilename, dpi=600)
+    plt.show()    
+
+
+def createRamaPlotOrig(phi, psi, filename, settings):
     plt.figure(figsize=(settings['figsizex'], settings['figsizey']))
     try:
         plotRanges = settings['plotRanges']
@@ -4087,7 +5391,10 @@ def pdbLineFromAtom(atom):
         exit(0)
     return l
 
-def writeAtomsToTextFile(atoms, filename):
+# dumps the specified range of residues to file from the atoms list
+# uses the indexnumbers in the atom list and the range is inclusive 
+# resrange = (firstRes, lastRes).
+def writeAtomsToTextFile(atoms, filename, resrange='none'):
     #open data file
     try:
         vst = open(filename, 'w')
@@ -4097,8 +5404,13 @@ def writeAtomsToTextFile(atoms, filename):
 
     #parse data 
     for atom in atoms:
-        l=pdbLineFromAtom(atom)
-        vst.write(l)
+        if resrange=='none':
+            l = pdbLineFromAtom(atom)
+            vst.write(l)
+        elif atom[5]>= resrange[0] and atom[5]<=resrange[1]:
+            l = pdbLineFromAtom(atom)
+            vst.write(l)
+            
     vst.close()
     return
 
@@ -4134,6 +5446,8 @@ def writeTextFile(lines, filename, append=False):
         vst.write(a)
     vst.close()
     return
+
+  
 
 def extractAtomFromPDB(line, HETATM=False):
     a = None
@@ -4721,6 +6035,228 @@ def addTermini(infile, params):
     # output the new file
     outfile = fileRootFromInfile(infile) + '_term.pdb'
     writeTextFile(pdb, outfile)
+
+def frenetFrameAnalysis(infile, params):
+    
+    print("getting all pdbs")
+    pdbFiles = glob.glob("*.pdb")
+    
+    for filename in pdbFiles:
+        print("Processing File: ", filename)
+        frenetFrameAnalysisIndividual(filename, params)
+        
+
+def frenetFrameAnalysisIndividual(infile, params ):
+
+    # testFrenetFrame()
+    
+    atoms = readAtoms(infile)
+    backbone= getBackBone(atoms, testSet=params['testSet']) 
+    names = np.array(getResNames(atoms, testSet=params['testSet']))
+
+    print(names)
+    
+    kList, tList = compute_curvature_torsion(backbone)
+    
+    l = []
+    for k, t, name in zip(kList, tList, names):
+        l.append(name + ", " + str(k) + ', ' + str(t) + '\n')
+    
+    params['fileroot'] = infile[0:-4]
+    params['pngName'] = params['fileroot'] + '.png'
+    writeTextFile(l, params['fileroot'] + '.kt', append=False)
+    
+    plotTorsionCurvature(kList, tList, names, params)
+
+
+def testFrenetFrame():
+    t = np.linspace(-np.pi, np.pi, 100)
+    r = 5
+    p = 40
+    xs = r * np.cos(t)
+    ys = r * np.sin(t)
+    zs = p * t
+    points = [ np.array([x, y, z]) for x, y, z in zip(xs, ys, zs) ]
+
+    kList, tList = compute_curvature_torsion(points)
+     
+    print(kList, tList)
+    print(r/(r*r + p*p), p/(r*r + p*p))
+
+    
+
+def plotTorsionCurvature(k, t, names, params):
+    k = np.array(k)
+    t = np.array(t)
+    names = np.array(names)
+
+
+    # generate figure for histograms
+    fig1 = plt.figure(figsize=(params['figsizex'], params['figsizey']))
+
+    unique_res_names = set(names)
+    
+    print(unique_res_names)
+    
+    HistDict = {}
+
+    # compute the histogram and edges of the whole list.
+    hist_k, bin_edges_k = np.histogram(k, bins='auto', density=False)
+    hist_t, bin_edges_t = np.histogram(t, bins='auto', density=False)
+
+    n = 1
+    if params['normalize']:
+        n = len(k)
+    
+#     # add it to dictionary
+#     HistDict['ALL'] = {  'hist_k': cp.copy([h/n for h in hist_k]), 
+#                          'edges_k': cp.copy(bin_edges_k), 
+#                          'hist_t': cp.copy([h/n for h in hist_t]), 
+#                          'edges_t': cp.copy(bin_edges_t),
+#                          'bin_centers_k': [ (b1+b2)/2 for b1, b2 in zip(bin_edges_k[0:-1], bin_edges_k[1:])],
+#                          'bin_centers_t': [ (b1+b2)/2 for b1, b2 in zip(bin_edges_t[0:-1], bin_edges_t[1:])],
+#                          'k': params['plotDetails']['ALL']['k'],
+#                          't': params['plotDetails']['ALL']['t']}
+# 
+#     # loop through each unique residue and compute the histogram for that residue for t and k
+#     for res in unique_res_names:
+#         try:
+#             subsetNames = np.where(names==res)
+#             n = 1
+#             if params['normalize']:
+#                 n = len(subsetNames[0])
+#         
+#             hist_k, bin_edges_k = np.histogram(k[subsetNames], bins='auto', density=False)
+#             hist_t, bin_edges_t = np.histogram(t[subsetNames], bins='auto', density=False)
+#             HistDict[res] = {'hist_k': cp.copy([h/n for h in hist_k]), 
+#                              'edges_k': cp.copy(bin_edges_k), 
+#                              'hist_t' : cp.copy([h/n for h in hist_t]),
+#                              'edges_t': cp.copy(bin_edges_t),
+#                              'bin_centers_k': [ (b1+b2)/2 for b1, b2 in zip(bin_edges_k[0:-1], bin_edges_k[1:])],
+#                              'bin_centers_t': [ (b1+b2)/2 for b1, b2 in zip(bin_edges_t[0:-1], bin_edges_t[1:])],
+#                              'k': params['plotDetails'][res]['k'],
+#                              't': params['plotDetails'][res]['t']}
+#         except KeyError as e:
+#             print(" unable to find style information for key: ", e) 
+# 
+# 
+#     for key in HistDict:
+#         print("Plotting info for key: ", key)
+#         stylek = HistDict[key]['k']
+#         stylet = HistDict[key]['t']
+#         plt.plot( HistDict[key]['bin_centers_k'], 
+#                   HistDict[key]['hist_k'],
+#                   markeredgewidth=stylek['markeredgewidth'],
+#                   markeredgecolor=stylek['markeredgecolor'],
+#                   markerfacecolor=stylek['markerfacecolor'],
+#                   marker=stylek['marker'],
+#                   linestyle=stylek['linestyle'],
+#                   color=stylek['linecolor'],
+#                   zorder=stylek['zorder'] )
+#         plt.plot( HistDict[key]['bin_centers_t'], 
+#                   HistDict[key]['hist_t'],
+#                   markeredgewidth=stylet['markeredgewidth'],
+#                   markeredgecolor=stylet['markeredgecolor'],
+#                   markerfacecolor=stylet['markerfacecolor'],
+#                   marker=stylet['marker'],
+#                   linestyle=stylet['linestyle'],
+#                   color=stylet['linecolor'],
+#                   zorder=stylet['zorder'] )
+# 
+#     # set global params and behaviour for the figure
+#     plt.xlabel(params['ylabel'], fontsize=params['labelfontsize'])
+#     plt.ylabel("Frequency", fontsize=params['labelfontsize'])
+#     title = params['fileroot']
+#     plt.title(title, fontsize=params['titlefontsize'])
+#     #plt.xticks(bin_centers_k, fontsize=params['tickfontsize'])
+#     #plt.xticks(fontsize=params['tickfontsize'])
+#     #plt.yticks(fontsize=params['tickfontsize'])
+#     plt.savefig("hist_" + params['pngName'], dpi=600)
+#     plt.show()
+
+    fig2 = plt.figure(figsize=(params['figsizex'], params['figsizey']))
+
+    # plot the x, y points for the current subPlot                
+    style = params['plotDetails']['curvature']
+    plt.plot(k, 
+            markeredgewidth=int(style['markeredgewidth']),
+            markerfacecolor=style['markerfacecolor'], 
+            markeredgecolor=style['markeredgecolor'],
+            marker=style['marker'], 
+            markersize=style['markersize'],
+            linestyle=style['linestyle'],
+            zorder=style['zorder'])
+
+    style = params['plotDetails']['torsion']
+
+    # plot the x, y points for the current subPlot                
+    plt.plot(t, 
+            markeredgewidth=int(style['markeredgewidth']),
+            markerfacecolor=style['markerfacecolor'], 
+            markeredgecolor=style['markeredgecolor'],
+            marker=style['marker'], 
+            markersize=style['markersize'],
+            linestyle=style['linestyle'],
+            zorder=style['zorder'])
+        
+    # set global params and behaviour for the figure
+    plt.xlabel(params['xlabel'], fontsize=params['labelfontsize'])
+    plt.ylabel(params['ylabel'], fontsize=params['labelfontsize'])
+    title = params['title']
+    plt.title(title, fontsize=params['titlefontsize'])
+    plt.xticks(np.arange(0, len(k)+100, 100), fontsize=params['tickfontsize'])
+    plt.yticks(params['yticks'], fontsize=params['tickfontsize'])
+    plt.xticks(fontsize=params['tickfontsize'])
+    plt.yticks(fontsize=params['tickfontsize'])
+    plt.xlim([ params['xMin'], len(k)])
+    plt.ylim([ params['yMin'], params['yMax']])
+    plt.savefig(params['pngName'],dpi=600)
+    plt.show()
+
+
+# given a list of coords compute the curvature and torsion at each point
+def compute_curvature_torsion(points):
+    # Convert list of points to numpy array
+    points = np.array(points)
+    
+    # Compute tangents, normals, and binormals using central differences
+    tangents = np.gradient(points, axis=0)
+    tHat = tangents/np.linalg.norm(tangents, axis=1)[:, np.newaxis]
+    
+    d_tangents = np.gradient(tangents, axis=0)
+    nHat = d_tangents / np.linalg.norm(d_tangents, axis=1)[:, np.newaxis]
+    
+    d_d_tangents = np.gradient(d_tangents, axis=0)
+    
+    crossTerms = np.cross(tangents, d_tangents, axis=1)
+ 
+    dotCrossTerms = [ np.dot(c, c) for c in crossTerms ]
+    
+
+    # Compute curvature and torsion
+    # k = norm(r'. r'')/ norm(r')^3
+    curvature = np.linalg.norm(np.cross(tangents, d_tangents, axis=1), axis=1)/ np.linalg.norm(tangents, axis=1)**3   
+
+    # tau = r'.r''.r'''/ (r' x r'').(r' x r'')
+    torsion = np.linalg.det(np.dstack([tangents, d_tangents, d_d_tangents]))/dotCrossTerms
+    
+    
+    return curvature, torsion
+
+
+# function to read a curvacture function file and return to lists of floats. 
+def procCurvature(filename):
+
+    k = []
+    t = []
+    for l in readTextFile(filename):
+            vals = l.split()
+            k.append( float(vals[0]) )
+            t.append( float(vals[1]) )
+
+    return k, t
+
+
 
 def fragmentPDB(infile, params):
     # assume only one chain
@@ -5371,11 +6907,13 @@ def convertSequence(infile, outfile):
     writeTextFile(outSequence, outfile)
         
 
-def readSequence(infile, mode, outfile, width=80):
+def readSequence(infile, mode, outfile=None, width=80):
     atoms=readAtoms(infile)
     residues=findResidues(atoms)
     
-    internalReadSequence(residues, mode, outfile=outfile, width=width)
+    l = internalReadSequence(residues, mode, outfile=outfile, width=width)
+
+    return l
 
 # returns a string or list of strings containing the sequence of the residues in the list in the mode specified in mode. 
 # Dumps to specific file if requested. 

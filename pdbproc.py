@@ -167,6 +167,12 @@ command is one of:
         1 100
         35 39
    
+    frenetFrameAnalysis ffa inpfile.pdb config.json
+        computes the frenet frame at each point on the back bone of the given PDB and 
+        determines the curvature and torsion of the backbone at each residue.
+        dumps a straight up text file with K and T at each residue and plots a graph with parameters defined in config.json 
+   
+   
     generateCTAtomGroups, GCTAG infile
         takes a initial_cis_trans_state file and creates an atomgroups file for all the CIS peptide bonds. Uses information
         in the pdb file pointed at by infile to help construct the atomgroups file
@@ -188,6 +194,25 @@ command is one of:
         reads the PDB and dumps the atoms XYZ file, but relabels the atom types according 
         to basic atom type. All Cs are called C, all H1, HE1 etc become H.  Reduces number of objects
     loaded into blender
+
+    gyrationAnalysis gyrA inpfile, params
+        computes the radius of gyration of a molecule about its principal moments of inertia
+        and for the molecule as a whole
+        returns the extent of the object in each of those principal directions  
+
+    GanTrain gc trainSetDirectory configs.json
+    
+        takes a training set of PDBs and creates a generator and discriminator GAN model and saves it in the input dir.
+        Does some validation between a random set of input distances and a reserved part of the training set.
+        
+
+    GanCompare trainSetDirectory testSetDirectory configs.json
+
+        Loads a model from the trainingSet directory and the data from the testSet Directory
+        and outputs the what the trained discriminator model thinks regarding the nature of the testSet
+
+        Collates a score for every NMer in a file and returns an aggregate score for the file. 
+        Also compiles an aggregate score for all the files against that Gan Model.
 
     makeXYZforBlender ir mXB inpfile backboneOnly mode
         reads the PDB and creates and xyz for reading into blender. If backboneOnly is 1, then it dumps 
@@ -279,9 +304,12 @@ command is one of:
         Makes a ramachandran plot of the pdb file.  the plot settings are controlled via the configFilej JSON
     
     ramachandrans or rmcs inpfile, configFile
-        Makes a ramachandran plot of each file in a glob defined in the config file.
+        Makes a ramachandran plot of each file in a glob defined in the inpDir.
+        ignores inpFile, but does test that it exists for backwards compatibility
         The plot settings are controlled via the configFile in json format as for ramachandran
     
+    ramadensity or rmd inpfile, configFile
+        Makes a 2D Histogram of the phi and psi angles in the pdb file.  The plot settings are controlled via the configFilej JSON
         
     readChirality or rc inpfile [outfile]
         Checks the chirality state of each proline and hydroxyproline  
@@ -364,6 +392,12 @@ command is one of:
         atom1index
         atom2index 
     
+    scanSetForSequence ssfs inpfile inputDirectory outputDirectory
+    
+        loads an inpfile, gets the sequence from it and then scans a directory of pdbs for any pdbs that contain 
+        that sequence. Outputs the segment of each pdbs that matches the sequence perfectly as a new pdb with the 
+        same file name that it came from plus the first 10 letters of the sequence.
+    
     sortRes or sR inpfile sortFile [outfile]
         Outputs the residues in the infile in the order specified in the sortFile and then 
         renumbers residues starting at 1. looks for inpFile or inpFile.pdb and if outfile is not specified
@@ -373,21 +407,45 @@ command is one of:
     
         creates a minimal segmented spherocylinder as an envelope around the collection of points stored in the pdb file. 
     
-    surfaceFind sf inpfile config.json 
+    surfaceFindGB sfg inpfile config.json 
     
+        Analyses a pdb and finds surface of protein, 
+        Plots analysis of where residues are relative to that surface. 
+
+
+    surfaceFindTube sft inpfile config.json
+
         Computes the center of mass of subsets of amino acids a certain distance apart along a protein chain. 
         Generates a smoothed version of the "fold" for a PDB. The vector between each center of mass defines an axis.
         Compute the distance of each residue (CA) from every segment. Assign each residue to its closest segment.  Use that 
         to compute the distance of each segment from the notional axis. 
-        
+    
         Create a histogram of the distance of each residue type from the axis.
+    
+        Gets a value for the contour length of the spidroin tube. 
         
     Surfaces sfs inpfile config.json
     
         for every model in a PDB run the surfaces algorithm and compute a histogram. Enables the center of mass 
         and tube radius to emerge over time.
+
         
     torsionDiff or td or tD or Td or TD inpDirectory [outfile]
+
+
+    trajectoryCluster or tc referenceFile inpDirectory configFile
+    
+        takes a directory of pdbs and builds a model categorises every nmer backbone sequence to determine different types of turns etc.
+        
+        Must align every nmer subsequence with a reference structure first. 
+        
+        Creates a finger print of a set of proteins.  
+    
+    trajectoryMeasure or tm inpfile modelDirectory configFile
+        
+        Classifies a protein according to its score against each classes of nmer category in a kind of vector score for the protein.
+        We can take each nmer sub chain and project it into a category, and then sum how many of each category go to make up the whole protein. 
+    
 
     writepucker or wp inpfile puckerStateFile [outfile]
         sets the pucker state of each residue in the inpfile pdb to the status specified in puckerStateFile.
@@ -468,8 +526,15 @@ command is one of:
             print("correlatePdbs: Must specify inpfile1, inpfile2 configfile.json")
             exit(1)
 
+    elif command in ['frenetFrameAnalysis', 'ffa']:
+        if len(sys.argv)==4:
+            with open(sys.argv[3], "r") as f: 
+                params=json.load(f)
+            print("frenetFrame Analysis: inpfile:", infile, ", params: ", params)
+        else:
+            print("frenetFrameAnalysis: Must specify infile configfile.json")
+            exit(1)
 
-           
     elif command in ['dumpParticularAtoms','dpa']:
         if len(sys.argv)==4:
             with open(sys.argv[3], "r") as f: 
@@ -479,13 +544,54 @@ command is one of:
             print("dumpParticularAtoms: Must specify inpfile and configfile:  dap inpfile config.json")
             exit(1)
 
-    elif command in ['surfaceFind','sf']:
+    elif command in ['GanTrain', 'gt']:
+        if len(sys.argv)==5:
+            with open(sys.argv[4], "r") as f: 
+                params=json.load(f)
+            params['trainSetDir'] = sys.argv[3]
+            print("gt params: ", params)
+        else:
+            print("Must specify dummyInpFile trainSetDir and config.json:  gt inpFile trainSetDir config.json")
+            exit(1)
+
+    elif command in ['GanCompare', 'gc']:
+        if len(sys.argv)==6:
+            with open(sys.argv[5], "r") as f: 
+                params=json.load(f)
+            params['trainSetDir'] = sys.argv[3]
+            params['testSetDir'] = sys.argv[4]
+            print("gc params: ", params)
+        else:
+            print("Must specify dummyInpFile trainSetDir, testSetDir and config.json:  gc inpFile trainSetDir testSetDir config.json")
+            exit(1)
+
+    elif command in ['scanSetForSequence', 'ssfs']:
+        if len(sys.argv)==5:
+            params = {}
+            params['inputDirectory'] = sys.argv[3]
+            params['outputDirectory'] = sys.argv[4]
+            print("ssfs params: ", params)
+        else:
+            print("Must specify inpfile, inputDirectory and outputDirectory:  ssfs inpfile inputDirectory outputDirectory")
+            exit(1)
+
+
+    elif command in ['surfaceFindTube','sft']:
         if len(sys.argv)==4:
             with open(sys.argv[3], "r") as f: 
                 params=json.load(f)
-            print("sf params: ", params)
+            print("sft params: ", params)
         else:
-            print("Must specify inpfile and configfile:  sf inpfile config.json")
+            print("Must specify inpfile and configfile:  sft inpfile config.json")
+            exit(1)
+
+    elif command in ['surfaceFindGB','sfg']:
+        if len(sys.argv)==4:
+            with open(sys.argv[3], "r") as f: 
+                params=json.load(f)
+            print("sfg params: ", params)
+        else:
+            print("Must specify inpfile and configfile:  sfg inpfile config.json")
             exit(1)
 
     elif command in ['surfacesFind','sfs']:
@@ -496,6 +602,33 @@ command is one of:
         else:
             print("Must specify inpfile and configfile:  sf inpfile config.json")
             exit(1)
+
+    elif command in ['trajectoryCluster', 'tc']:
+        if len(sys.argv)==5:
+            with open(sys.argv[4], "r") as f: 
+                params=json.load(f)
+                params['inputDirectory'] = sys.argv[3]
+            print("tc params: ", params)
+        else:
+            print("Must specify reffile, directory of PDBs and configfile:  tc inpfile directory config.json")
+            exit(1)
+          
+    elif command in ['trajectoryMeasure', 'tm']:
+        if len(sys.argv)==5:
+            with open(sys.argv[4], "r") as f: 
+                params=json.load(f)
+                params['modelFile'] = sys.argv[3]
+            print("tm params: ", params)
+        else:
+            print("Must specify inpfile, modelfile and configfile:  tm inpfile model config.json")
+            exit(1)
+
+
+    elif command in ['gyrationAnalysis', 'gyrA']:
+        if len(sys.argv)!=3:
+            print("gyrA: Must specify inpfile:  gyrA inpfile")
+            exit(1)
+
 
     elif command in ['pairwisedistance', 'pwd']:
         if len(sys.argv)==4:
@@ -663,10 +796,22 @@ command is one of:
     # ramachandrans 
     elif command in ['ramachandrans', 'rmcs', 'ramas']:
         if len(sys.argv)==4:
-            params = [ sys.argv[3] ]
-            print("ramachandran plots: dummy pdbFile: " + sys.argv[2] + ", figure Config:" + sys.argv[3])
+            with open(sys.argv[3], "r") as f:
+                params = json.load( f )
+            print("ramachandran plots", sys.argv[3] , params)
         else:
-            print(" usage:  pdbproc rama <dummy.pdb> <figConfig.json>")
+            print(" usage:  pdbproc ramas <dummy.pdb> <figConfig.json>")
+
+    #ramachandran density plot
+    elif command in ['ramadensity', 'rmd', 'ramad']:
+        if len(sys.argv)==4:
+            with open(sys.argv[3], "r") as f: 
+                params=json.load(f)
+            print("ramad params: ", params)
+        else:
+            print("Must specify inpfile and configfile:  ramad inpfile config.json")
+            exit(1)
+
 
     #replace pdb with xyz data
     elif command in ['replacePdbXyz','xyz2pdb']:
@@ -1019,6 +1164,9 @@ if __name__ == '__main__':
 
         elif command in ['fragmentPDB', 'fragmentpdb', 'fpdb', 'fPDB', 'FPDB']:
             pl.fragmentPDB(infile, params)
+            
+        elif command in ['frenetFrameAnalysis', 'ffa']:
+            pl.frenetFrameAnalysis(infile, params)
         
         elif command in ['createSequence', 'CSQ', 'csq']:
             pl.createSequence(infile, type=params[2], term=params[1])
@@ -1032,6 +1180,9 @@ if __name__ == '__main__':
         elif command in ['generateFreezeDryGroups', 'gfg', 'GFG']: 
             pl.generateFreezeDryGroups(infile, int(params[0]), int(params[1]), float(params[2]), bool(params[3]) )
 
+        elif command in ['gyrationAnalysis', 'gyrA']:
+            pl.gyrationAnalysis(infile)
+        
         elif command in ['eliminateCIS', 'eCIS']:
             pl.eliminateCIS(infile)
 
@@ -1067,34 +1218,55 @@ if __name__ == '__main__':
         
         elif command in ['flipCT', 'fct']:
             pl.flipCT(infile, params)
-        
+
+        elif command in ['GanTrain', 'gt']:
+            pl.GanTrain(**params)
+
+        elif command in ['GanCompare', 'gc']:
+            pl.GanCompare(**params)        
+
         elif command in ['ramachandran', 'rmc', 'rama']:
             pl.ramachandran(infile, params[0])
+
+        elif command in ['ramadensity', 'rmd', 'ramad']:
+            pl.ramaDensity(infile, params)
         
         elif command in ['ramachandrans', 'rmcs', 'ramas']:
-            pl.ramachandrans(infile, params[0])
+            pl.AllFilesRamachandran( params )
         
         elif command in ['renameTermini','rt','rT','RT']:
             pl.renameTerminiTop(params[1],infile, int(params[0]))
         
         elif command in ['renumberRes','rn','rN','RN']:
             pl.renumberResidues(infile,params[0],params[1])
+
+        elif command in ['scanSetForSequence', 'ssfs']:
+            pl.scanSetForSequence(infile, params['inputDirectory'], params['outputDirectory'])
         
         elif command in ['sortRes','sr','sR','SR']:
             pl.sortResidues(infile, params[0], params[1])
         
         elif command in ['spherowrap', 'sw']:
             pl.spherowrap(infile, params)
+
+        elif command in ['trajectoryCluster', 'tc']:
+            pl.trajectoryCluster(infile, params)
+          
+        elif command in ['trajectoryMeasure', 'tm']:
+            pl.trajectoryMeasure(infile, params)
         
         elif command in ['dumpCAsAsPDB', 'dCA']:
             pl.dumpCAsAsPDB(infile)
         
-        elif command in ['surfaceFind','sf']:
-            pl.surfaceFind(infile, params)
+        elif command in ['surfaceFindGB','sfg']:
+            pl.surfaceFindGB(infile, params)
+
+        elif command in ['surfaceFindTube','sft']:
+            pl.surfaceFindTube(infile, params)
         
         elif command in ['surfacesFind','sfs']:
             pl.surfacesFind(infile, params)
-        
+            
         elif command in ['proToHyp','ph','pH','Ph','PH']:
             pl.proToHyp(infile,params[0],params[1])
         
