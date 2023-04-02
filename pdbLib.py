@@ -2040,14 +2040,15 @@ def measureDistancesToSurfaceCloud(surfPoints, allPoints, neighborHood=100, spac
 
 def GBSurfaceAnalyse(params):
     
-    url = 'http://curie.utmb.edu/cgi-bin/getarea.cgi'
+    url = 'https://curie.utmb.edu/cgi-bin/getarea.cgi'
     pdbData = {'water': params['waterRadius'], 
             'gradient': 'n',
             'name': params['inputfileroot'],
             'email':'chrisjforman@gmail.com',
             'Method': params['Method']}
-    file = { 'PDBfile': open(params['infile'], 'rb')}
 
+    file = { 'PDBfile': open(params['infile'], 'rb') }
+    
     SAData = requests.post(url=url, data=pdbData, files=file)
     
     dataList =[]
@@ -2141,7 +2142,10 @@ def processDistancesGB(distData, selectedAtoms, TubeLength, params):
     plt.xlabel("Residue Number")
     plt.ylabel("Distance (nm)")
     plt.savefig(params["outputfileroot"] + '_GB_distances.png', dpi=600)
-    plt.show()
+    if params['figShow']:
+        plt.show()
+    else:
+        plt.close(fig)
 
     
     # using kernel density estimate to find the edge of the tube at each radius
@@ -2167,7 +2171,10 @@ def processDistancesGB(distData, selectedAtoms, TubeLength, params):
         plt.xlabel("Residues")
         plt.ylabel("Frequency")
         plt.savefig(params["outputfileroot"] + '_GB_ResFreq.png', dpi=600)
-        plt.show()
+        if params['figShow']:
+            plt.show()
+        else:
+            plt.close(fig)
 
     print("Computing Radial Density Profile by Residue Type")
  
@@ -2182,7 +2189,10 @@ def processDistancesGB(distData, selectedAtoms, TubeLength, params):
     
     plt.savefig(params['outputfileroot'] + '_GB_radial_distribution.png', dpi=600)
 
-    plt.show()
+    if params['figShow']:
+        plt.show()
+    else:
+        plt.close(fig)
         
     return tubeOuterRadius, max_l_array
 
@@ -2231,8 +2241,11 @@ def plotRadialDensityByResidueGB(fig, d_all, resListFull, tubeLength, params, la
             # count the number of residues in the sub set
             numResidues = len(ds)
             
-            # generate an information print out string
-            max_l = res + ", " + str(np.max(ds)) + ", " + str(np.mean(ds)) + '\n'
+            if numResidues>0:
+                # generate an information print out string
+                max_l = res + ", " + str(np.max(ds)) + ", " + str(np.mean(ds)) + '\n'
+            else:
+                max_l = res + ", not present \n"
         
         # print out print statement for current sub set
         # print(max_l)
@@ -2243,18 +2256,19 @@ def plotRadialDensityByResidueGB(fig, d_all, resListFull, tubeLength, params, la
 
         # choose whether to normalize the distribution, showing the fractional density of each population in various bins 
         # or absolute density of each type of residue
-        if params['normalise']:
-            hist = [ h/numResidues for h in hist]
-        
-        # plot the current histogram out with the current style information
-        plt.plot( bin_centers + params['offset'], hist, label=res, 
-                  markeredgewidth=style['markeredgewidth'],
-                  markeredgecolor=style['markeredgecolor'],
-                  markerfacecolor=style['markerfacecolor'],
-                  marker=style['marker'],
-                  linestyle=style['linestyle'],
-                  color=style['linecolor'],
-                  zorder=style['zorder'] )
+        if numResidues>0:
+            if params['normalise']:
+                hist = [ h/numResidues for h in hist]
+            
+            # plot the current histogram out with the current style information
+            plt.plot( bin_centers + params['offset'], hist, label=res, 
+                      markeredgewidth=style['markeredgewidth'],
+                      markeredgecolor=style['markeredgecolor'],
+                      markerfacecolor=style['markerfacecolor'],
+                      marker=style['marker'],
+                      linestyle=style['linestyle'],
+                      color=style['linecolor'],
+                      zorder=style['zorder'] )
  
     try:
         plt.legend(loc=params['legLocn'])
@@ -2819,7 +2833,10 @@ def kde(data, params, label):
     ax.scatter(xPoints, radVals1, zorder=1)
     ax.scatter(xPoints, radVals2, zorder=1)
     plt.savefig(params['outputfileroot'] + '_kde_' + label + '_TubeRadius.png', dpi=600)
-    plt.show()
+    if params['figShow']:
+        plt.show()
+    else:
+        plt.close(fig)
     
     return radVals2, radVals1
 
