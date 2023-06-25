@@ -303,7 +303,7 @@ command is one of:
     ramachandran or rmc inpfile, configFile
         Makes a ramachandran plot of the pdb file.  the plot settings are controlled via the configFilej JSON
     
-    ramachandrans or rmcs inpfile, configFile
+    ramachandrans or rmcs inpfile, inpdir, configFile
         Makes a ramachandran plot of each file in a glob defined in the inpDir.
         ignores inpFile, but does test that it exists for backwards compatibility
         The plot settings are controlled via the configFile in json format as for ramachandran
@@ -406,6 +406,11 @@ command is one of:
     spherowrap or sw inpfile config.json
     
         creates a minimal segmented spherocylinder as an envelope around the collection of points stored in the pdb file. 
+    
+    surfaceAnalysisComplete sac inpfile config.json
+        Performs both tubule and GB analysis of a PDB and outputs a complete summary, including a plot of contour length 
+        with different averages and intervals for a given PDB. 
+    
     
     surfaceFindGB sfg inpfile config.json 
     
@@ -573,6 +578,15 @@ command is one of:
             print("ssfs params: ", params)
         else:
             print("Must specify inpfile, inputDirectory and outputDirectory:  ssfs inpfile inputDirectory outputDirectory")
+            exit(1)
+
+    elif command in ['surfaceAnalysisComplete','sac']:
+        if len(sys.argv)==4:
+            with open(sys.argv[3], "r") as f: 
+                params=json.load(f)
+            print("sac params: ", params)
+        else:
+            print("Must specify inpfile and configfile:  sac inpfile config.json")
             exit(1)
 
 
@@ -1258,6 +1272,9 @@ if __name__ == '__main__':
         elif command in ['dumpCAsAsPDB', 'dCA']:
             pl.dumpCAsAsPDB(infile)
         
+        elif command in ['surfaceAnalysisComplete','sac']:
+            pl.surfaceAnalysisCompleteGlob(infile, params)
+
         elif command in ['surfaceFindGB','sfg']:
             pl.surfaceFindGB(infile, params)
 
