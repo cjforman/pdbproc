@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 import sys, os
 import numpy as np
-from mpl_toolkits.mplot3d import Axes3D
-import matplotlib.pyplot as plt  
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm    
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.patches import FancyArrowPatch
 from scipy.optimize import fmin_l_bfgs_b, minimize, curve_fit
@@ -19,13 +19,15 @@ import networkx as nx
 import requests
 import pyvista as pv
 import periodictable as PT
-from sklearn.cluster import KMeans
-from sklearn.metrics import silhouette_score
+#from sklearn.cluster import KMeans
+#from sklearn.metrics import silhouette_score
 import pickle
-from tensorflow.random import normal
-from tensorflow import keras as K, expand_dims
-from tensorflow.compat.v1 import keras as TK
-from Cython.Shadow import returns
+from vtkmodules.vtkFiltersCore import vtkCenterOfMass
+from Utilities.fileIO import saveXYZ
+#from tensorflow.random import normal
+#from tensorflow import keras as K, expand_dims
+#from tensorflow.compat.v1 import keras as TK
+#from Cython.Shadow import returns
 
 # A global dictionary containing the information on which side groups can rotate for the various amino acids.
 # don't include the rotation axis in the list of atoms 
@@ -1080,6 +1082,12 @@ def get_atomic_mass(element_symbol):
     element = PT.elements.symbol(element_symbol)
     return element.mass
 
+
+
+
+
+
+
 def funkychicken():
     ''' test function for doing 2D correlation'''
     from scipy import signal
@@ -1890,6 +1898,363 @@ def scanSetForSequence(infile, inputDirectory, outputDirectory):
     
 ##### final surface analysis routines for the spidroin #####
 
+def measureTubeRadius(infile, params):
+    print("getting all pdbs")
+    pdbFiles = glob.glob("*.pdb")
+    
+    for filename in pdbFiles:
+        print("Processing File: ", filename)
+        measureTubeRadiusForFile(filename, params)
+        
+def measureTubeRadiusForFile(filename, params):
+    
+    inpFileRoot = filename[0:-4]
+    
+    print("Loading Atoms from ", filename)
+    atoms = readAtoms(filename)
+    positions = {}
+    
+    print("Parsing atom positions into dictionary")
+
+    # create a dictionary of lists of positions indexed by the same resid
+    for r in atoms:
+        try:
+            positions[r[5]].append(np.array( [ r[7], r[8], r[9] ] ))
+        except KeyError:
+            positions[r[5]] = [np.array( [ r[7], r[8], r[9] ] )]
+
+    rScale = 0.1 # pdbs are in angstroms so divide distances by 10 to give distances in nm
+    
+    print("Finding CAs")
+
+    # pull out the CAs and their positions - use as proxy for residue
+    CAAtoms = [ atom for atom in atoms if atom[1]=='CA']
+    CAPositions = [ np.array( [ r[7], r[8], r[9] ] ) for r in CAAtoms ]
+    resInfo = [ (r[5], r[3]) for r in CAAtoms ]
+    AllAtomPositions = [rScale * np.array( [ r[7], r[8], r[9] ] ) for r in atoms ]
+    
+    # count the number of residues. 
+    numResidues = len(CAPositions)
+    numAtoms = len(AllAtomPositions)
+
+
+    # Sum the Length of the CA Atoms 
+    print("Backbone Length: ", rScale * np.sum(np.array([np.linalg.norm(a-b) for a, b in zip (CAPositions[0:-1], CAPositions[1:])])))
+
+    
+    COMLine = rollingCOM( CAPositions, 150, 10)
+
+    print("Total 150,10 Contour Length: ", rScale * np.sum(np.array([np.linalg.norm(a-b) for a, b in zip (COMLine[0:-1], COMLine[1:])])))
+    print("Rg: ", RadiusOfGyration(AllAtomPositions))
+    print("Computing Max Euclidean length between CAs") 
+    pointA, pointB = maxDistInList(CAPositions)
+    print("Max Euclidean length between CAs in the structure: ", rScale * np.linalg.norm(pointA-pointB))
+
+    # set the length of each section 
+    secLength = 170
+
+    # get the number of sections
+    numSections = int(np.floor(numResidues/secLength))
+
+    cols = cm.rainbow( np.linspace(0, 1, num=numSections) )
+
+    print("Number of Sections:", numSections)
+
+    # find how many residues are left over.
+    leftOver = int(numResidues - numSections*secLength)
+
+    # make a note of the first residue to use (ignoring the ends as they are mostly N and C termini, not so bothered therein)
+    firstPoint = int(np.floor(leftOver/2))
+
+    # set up the array for the start and end points in terms of resIds
+    pointPairs = [ ( firstPoint + section*secLength, firstPoint + (section + 1) * secLength ) for section in range(numSections) ]
+    
+    print("Indices of the sections:", pointPairs)
+    
+    COMLinePoints = []
+    outDistancesCAs = []
+    outVectors = []
+    xs = []
+    ys = []
+    zs = []
+    cs = []
+    xsAll = []
+    ysAll = []
+    zsAll = []
+    csAll = []
+    dsAll = []
+    dsStats = []
+    HistArraysAll = []
+    HistArraysCAs = []
+    bins = np.linspace(0,params['maxBinSize'],num=params['numBins'])
+
+    print("Computing COMS and fitting lines")
+    section = 0
+    for start, end in pointPairs:
+       
+        # compute a list of all the positions
+        ALLPositions = [ pos for res in positions for pos in positions[res] if res>=start and res<end]
+       
+        # get the rollingCom Line
+        COMLine = rollingCOM( CAPositions[start: end], 50, 10)
+
+        LocalZeroForSegment = getCentreOfMass(COMLine)
+
+        # get a length for the section        
+        MaxLength = 1.1 * np.linalg.norm(COMLine[-1] - COMLine[0])
+        
+        # fit an axis to rolling com line centered at local Zero
+        directionVec = fit_best_fit_vector(COMLine - LocalZeroForSegment)
+        
+        # compute distances to line of best fit for the CAPositions
+        distancesCAPositions = distances_to_best_fit(directionVec, CAPositions[start:end] - LocalZeroForSegment)
+
+        # compute the distance to line of best fit for all the atoms in the current section
+        distancesAllPositions = distances_to_best_fit(directionVec, ALLPositions - LocalZeroForSegment)
+
+        # compute a histogram
+        CAcounts, bins = np.histogram([rScale * d for d in distancesCAPositions], bins = bins)
+
+        # compute a histogram
+        Allcounts, bins = np.histogram([rScale * d for d in distancesAllPositions], bins = bins)
+
+        # output the percentiles of each segment
+        dsStats.append(st.scoreatpercentile([rScale * d for d in distancesAllPositions], [50, 90, 95, 99]))
+
+        # export the distances for every atom en masse
+        [ dsAll.append(rScale * d) for d in distancesAllPositions]
+
+        # export each array in its entirety. Gonna Plot each one on same graph.
+        HistArraysCAs.append(CAcounts)
+        HistArraysAll.append(Allcounts)
+
+        # export the COM lines
+        [ COMLinePoints.append(COMLinePoint) for COMLinePoint in COMLine]
+
+        # generate a line of points along the line of best fit for visualisation purposes and dump into the output array
+        [ outVectors.append(directionVec[3:] + dist*directionVec[0:3] + LocalZeroForSegment) for dist in np.linspace(-MaxLength, MaxLength, num=100)]
+        
+        # add the distances to the distances out array
+        [ outDistancesCAs.append((resData[0], resData[1], rScale*dist)) for resData, dist in zip(resInfo[start:end], distancesCAPositions)]
+    
+        [ xsAll.append(point[0]) for point in ALLPositions]
+        [ ysAll.append(point[1]) for point in ALLPositions]
+        [ zsAll.append(point[2]) for point in ALLPositions]
+        [ csAll.append(cols[section]) for _ in ALLPositions] 
+    
+        [ xs.append(point[0]) for point in CAPositions[start:end]]
+        [ ys.append(point[1]) for point in CAPositions[start:end]]
+        [ zs.append(point[2]) for point in CAPositions[start:end]]
+        [ cs.append(cols[section]) for _ in CAPositions[start:end]] 
+        section += 1
+
+    print("Creating output")
+
+    # sort dsAll and output the median, the mode and the mean as well as the 90th, 95th, and 99th percentile. 
+    print("Percentile of distribution of all atoms: (50, 90, 95 and 99): ", st.scoreatpercentile(dsAll,[50, 90, 95, 99]))
+    for ds in dsStats:
+        print(ds)
+    print("Mean of the sections:", np.mean(dsStats,axis=0))
+    print("Std dev of the sections:", np.std(dsStats,axis=0))
+    
+    # set up a 3D plot to visualise the output for CA positions    
+    fig = plt.figure()
+    ax = fig.add_subplot(projection='3d')
+    
+    # plot each of the CAs in the segments in their own color
+    ax.scatter(xs,ys,zs, marker='.', color=cs)
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    
+    # plot each of the central fit lines for each sector in blue
+    xs = [ point[0] for point in outVectors]
+    ys = [ point[1] for point in outVectors]
+    zs = [ point[2] for point in outVectors]
+    ax.scatter(xs,ys,zs,marker='o', color='b')
+    
+    # plot each of the COM Line trajectories in Green
+    xs = [ point[0] for point in COMLinePoints]
+    ys = [ point[1] for point in COMLinePoints]
+    zs = [ point[2] for point in COMLinePoints]
+    ax.scatter(xs,ys,zs,marker='s', color='g')
+    plt.savefig(inpFileRoot + '_SegmentsCAs.png', dpi=300)
+    #plt.show()
+    plt.close(fig)
+    
+    # set up a 3D plot to visualise the output for All Positions    
+    fig = plt.figure()
+    ax = fig.add_subplot(projection='3d')
+    
+    # plot each of the CAs in the segments in their own color
+    ax.scatter(xsAll,ysAll,zsAll, marker='.', color=csAll)
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    
+    # plot each of the central fit lines for each sector in blue
+    xs = [ point[0] for point in outVectors]
+    ys = [ point[1] for point in outVectors]
+    zs = [ point[2] for point in outVectors]
+    ax.scatter(xs,ys,zs,marker='o', color='b')
+    
+    # plot each of the COM Line trajectories in Green
+    xs = [ point[0] for point in COMLinePoints]
+    ys = [ point[1] for point in COMLinePoints]
+    zs = [ point[2] for point in COMLinePoints]
+    ax.scatter(xs,ys,zs,marker='s', color='g')
+    plt.savefig(inpFileRoot + '_SegmentsAll.png', dpi=300)
+    #plt.show()
+    plt.close(fig)
+    
+    
+    fig = plt.figure()
+    for section, histArray in enumerate(HistArraysAll):    
+        # Plot the histogram of All Atom positions
+        plt.plot([(binL + binR)/2 for binL, binR in zip(bins[0:-1],bins[1:])] , histArray/np.sum(histArray), color=cols[section])
+    plt.xlabel('Distance from center line (nm)')
+    plt.ylabel('Frequency')
+    plt.title('Histogram of All Atom Distances from Best-fit Line')
+    plt.grid(False)
+    plt.savefig(inpFileRoot + '_distHistAll.png', dpi=300)
+    plt.close(fig)
+    
+    fig = plt.figure()
+    for section, histArray in enumerate(HistArraysCAs):    
+        # Plot the histogram of CA positions
+        plt.plot([(binL + binR)/2 for binL, binR in zip(bins[0:-1],bins[1:])] , histArray/np.sum(histArray), color=cols[section])
+    plt.xlabel('Distance from center line (nm)')
+    plt.ylabel('Frequency')
+    plt.title('Histogram of CA Distances from Best-fit Line')
+    plt.grid(False)
+    plt.savefig(inpFileRoot + '_distHistCA.png', dpi=300)
+    plt.close(fig)
+
+    fig = plt.figure()
+    ThreshBinSum = 0
+    ThreshBinSumSq = 0
+    for section, histArray in enumerate(HistArraysAll):    
+        # Plot the cumulative histogram of ALL positions
+        plt.plot([(binL + binR)/2 for binL, binR in zip(bins[0:-1],bins[1:])] , np.cumsum(histArray)/np.sum(histArray), color=cols[section])
+        
+        # find the bin containing the 90% line. 
+        for i, val in enumerate(np.cumsum(histArray)/np.sum(histArray)):
+            if val> 0.9:
+                print("Center of All Atoms Bin Containing 90th Percentile: ", (bins[i]+bins[i+1])/2)
+                ThreshBinSum += (bins[i]+bins[i+1])/2 
+                ThreshBinSumSq += ((bins[i]+bins[i+1])/2)**2
+                break 
+    
+    mB = ThreshBinSum / numSections
+    sd = np.sqrt(ThreshBinSumSq/numSections - mB**2)
+    print("Mean bin: ", mB, " sd: ", sd)
+        
+    plt.xlabel('Distance from center line (nm)')
+    plt.ylabel('Frequency')
+    plt.title('Cumulative Histogram of All Atom Distances from Best-fit Line')
+    plt.grid(False)
+    plt.savefig(inpFileRoot + '_cumdistHistAll.png', dpi=300)
+    plt.close(fig)
+
+    fig = plt.figure()
+    for section, histArray in enumerate(HistArraysCAs):    
+        # Plot the cumulative histogram of CA positions
+        plt.plot([(binL + binR)/2 for binL, binR in zip(bins[0:-1],bins[1:])] , np.cumsum(histArray)/np.sum(histArray), color=cols[section])
+    plt.xlabel('Distance from center line (nm)')
+    plt.ylabel('Frequency')
+    plt.title('Cumulative Histogram of CA Distances from Best-fit Line')
+    plt.grid(False)
+    plt.savefig(inpFileRoot + '_cumdistHistCA.png', dpi=300)
+    plt.close(fig)
+    
+    fig = plt.figure()
+    ax=plt.subplot(111)
+    for res, style in params['resOfInterest'].items():
+        if res=='ALL':
+            ds = [ dist[2] for dist in outDistancesCAs ]
+            rID = [ rID[0] for rID in outDistancesCAs ]
+            ds = []
+        else:
+            ds = [ dist[2] for dist in outDistancesCAs if dist[1]==res ]
+            rID = [ rID[0] for rID in outDistancesCAs if rID[1]==res ]
+        
+        if len(ds)>0:
+            ax.plot( rID, ds, label=res, 
+                      markeredgewidth=style['markeredgewidth'],
+                      markeredgecolor=style['markeredgecolor'],
+                      markerfacecolor=style['markerfacecolor'],
+                      marker=style['marker'],
+                      linestyle='none',
+                      color=style['linecolor'],
+                      zorder=style['zorder'] )
+
+    box = ax.get_position()
+    ax.set_position([box.x0, box.y0, box.width * 0.9, box.height])
+    
+    try:
+        ax.legend(loc=params['legLocn'], ncol=1, bbox_to_anchor=(1.25, 0.75))
+    except KeyError:
+        ax.legend(loc='upper right ')
+
+    for start, end in pointPairs:
+        ax.axvline(x=start, color='k')
+    ax.axvline(x=end, color='k')
+    
+    plt.xlabel('Residue Number')
+    plt.ylabel('Distance from center line (nm)')
+    plt.title('Distance of residues from center line by type.')
+    plt.grid(False)
+    plt.savefig(inpFileRoot + '_DistVsIndex.png', dpi=300)
+    plt.close(fig)
+    
+
+    
+
+
+# Define the objective function to minimize the distance from the points to the line
+def distances_to_best_fit(params, points):
+    # Params contains the direction vector of the line (unit vector)
+    direction_vector = params[0:3] / np.linalg.norm(params[0:3])
+    RefPoint = params[3:]
+
+    # Calculate the distance from each point to the line
+    distances = np.linalg.norm(np.cross(points - RefPoint, direction_vector), axis=1)
+
+    # Return the sum of squared distances as the objective to minimize
+    return distances
+    
+def fit_best_fit_vector(points):
+    # Convert the points to a NumPy array
+    points = np.array(points)
+
+    # Define the objective function to minimize the distance from the points to the line. 
+    # Also messing with the position from which the line is measured. Six dimensional Minimization.
+    def objective_function(params):
+        # Params contains the direction vector of the line (unit vector)
+        direction_vector = params[0:3] / np.linalg.norm(params[0:3])
+        RefPoint = params[3:]
+
+        # Calculate the distance from each point relative to the reference point to the line through the origin
+        distances = np.linalg.norm(np.cross(points - RefPoint, direction_vector), axis=1)
+
+        # Return the sum of squared distances as the objective to minimize
+        return np.sum(distances**2)
+
+    COM = getCentreOfMass(points)
+    InitLine = points[-1] - points[0]
+
+    # Initial guess for the direction vector of the line and the RefPoint
+    initial_guess = np.array([InitLine[0], InitLine[1], InitLine[2], COM[0],COM[1],COM[2]])
+
+
+    # Minimize the objective function to find the best fit vector
+    result = minimize(objective_function, initial_guess, method='L-BFGS-B')
+
+    # Extract the best fit vector from the optimization result
+    best_fit_vector = result.x / np.linalg.norm(result.x)
+
+    return best_fit_vector    
+
 def surfaceAnalysisCompleteGlob(infile, params):
     print("getting all pdbs")
     pdbFiles = glob.glob("*.pdb")
@@ -1968,12 +2333,80 @@ def surfaceAnalysisComplete(infile, params):
     for a in resBreakDownTube:
         print(a)    
 
+# returns the radius of gyration of a set of points - assumes equal masses at each point.
 def RadiusOfGyration(vectors):
+    # actually this is a second implementation of radius of gyration
     arr = np.array(vectors)
     center_of_mass = np.mean(arr, axis=0)
     distances = np.sqrt(np.sum((arr - center_of_mass)**2, axis=1))
     return np.sqrt(np.sum(distances**2) / len(vectors))
 
+
+def multimerRg(infile, params):
+    
+    # load the pdb and the atoms separately 
+    pdb=readTextFile(infile)
+    atoms=extractAllAtomsFromPDB(pdb)
+
+    # extract the coords as a list of numpy 3-arrays 
+    atomPosList = getCoordsFromAtoms(atoms, asNumpyList=True)
+
+    # get the centre of mass of the original pdb atoms.
+    COM = getCentreOfMass(atomPosList)
+    
+    
+    # zero the original. Just makes life easier!
+    atomPosListCom = [ atomPos - COM for atomPos in atomPosList]
+    
+    # build up a dictionary with all the multimer instructions and names in it.
+    # make sure it starts with the original so that one comes out first entry in the Rg List.  
+    rtVecDict = {}
+    rtVecDict['original'] = [90.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 'Ca']
+    for key in params['MultimerVecRots']:
+        rtVecDict[key]=params['MultimerVecRots'][key]
+
+    # initialise lists for output
+    Rgs = []
+    newXYZList = []
+    nameList = []
+
+    # for every septuple supplied in the params create a copy of the atoms and rotrans it.
+    for multimerName in rtVecDict:
+        
+        print("Processing: ", multimerName)
+        
+        # translate the vecpos
+        vecPos = rtVecDict[multimerName]
+        
+        # rotation angle in degrees
+        rotAngle = vecPos[0]
+        
+        # rotation vector about which to rotate the object. This is placed at the COM of the object.
+        rotVec = np.array([vecPos[1], vecPos[2], vecPos[3]])
+        
+        # relative position to translate the object after the rotation
+        relTransPos = np.array([vecPos[4], vecPos[5], vecPos[6]])
+        
+        # takes each point in the atoms list and rotates it an angle rotAngle (specified in degrees) 
+        # about a vector "rotVec" placed at the origin. 
+        # then translates the point.
+        newVecs = [ rotateVector(cp.copy(point), np.array([0.0, 0.0, 0.0]), rotVec, rotAngle) + relTransPos for point in atomPosListCom ]
+        
+        # Each new copy is saved as a separate pdb. Just being lazy.
+        replacePdbAtoms("dummyFilename", newVecs, infile[0:-4] + '_' + multimerName + '.pdb', pdb=pdb, atoms=atoms, noCR=True)
+        
+        # build up a big array of points
+        newXYZList = newXYZList + cp.copy(newVecs)
+        
+        nameList = nameList + len(newXYZList) * [vecPos[7]]
+        
+        # compute the cumulative Rgs as we add each multimer
+        Rgs.append(RadiusOfGyration(newXYZList))
+
+
+    # save an XYZ file of the combined list with all points as C atoms. 
+    saveXYZ(newXYZList, infile[0:-4] + '_multimer' + params['name'] + '.xyz', nameList)
+    print(Rgs)
 
 def exponential_decay(x, a):
     return np.exp(-x / a)
@@ -2431,38 +2864,70 @@ def measureDistancesToSurfaceCloud(surfPoints, allPoints, neighborHood=100, spac
     
     return allPoints_mesh['implicit_distance']
 
+def solventExposure(commandLineInpfile, params):
+    if params['processAllPdbsInDir']:
+        print("Processing all PDBs in dir")
+        for inpfile in glob.glob( '*.pdb'):
+            print(inpfile)
+            params['infile']=inpfile
+            params['inputfileroot']=inpfile[0:-4]
+            params['outputfileroot']=inpfile[0:-4]
+            #pymolLoadSave(params['infile'], params['infile'])
+            try:
+                GBSurfaceAnalyse(params)
+            except UnboundLocalError:
+                print("Error with file:", inpfile, ". Moving on.") 
+                pass
+    else:
+        print(commandLineInpfile)
+        inpfile = commandLineInpfile
+        params['infile']=inpfile
+        params['inputfileroot']=inpfile[0:-4]
+        params['outputfileroot']=inpfile[0:-4]
+        #pymolLoadSave(params['infile'], params['infile'])
+        try:
+            GBSurfaceAnalyse(params)
+        except UnboundLocalError:
+            print("Error with file:", inpfile, ". Moving on.") 
+            pass
+
+def pymolLoadSave(inpfile, outputfile):        
+    import __main__, sys
+    __main__.pymol_argv = ['pymol','-qc']
+    import pymol
+    from pymol import cmd
+    pymol.finish_launching()
+    
+    cmd.load(inpfile)  # use the name of your pdb file
+    cmd.save(outputfile)
+
 def GBSurfaceAnalyse(params, fileend="_SA.data", recursionDepth=0):
     
     if recursionDepth==0:
         # Little hack to call this function again with the residue method and dump to a different file
         tempMethod = params['Method']
         params['Method']=2
-        _,_ = GBSurfaceAnalyse(params, fileend="_m2_SA.data", recursionDepth=recursionDepth+1)
+        _,_ = GBSurfaceAnalyse(params, fileend="_m2_SA.data", recursionDepth=recursionDepth + 1)
         params['Method']=tempMethod
-    
-        # put a delay in to give server time to recover
-        import time as tm    
-        tm.sleep(10)    
     
     # run this function as originally called    
     url = 'https://curie.utmb.edu/cgi-bin/getarea.cgi'
     pdbData = {'water': params['waterRadius'], 
             'gradient': 'n',
             'name': params['inputfileroot'],
-            'email':'chrisjforman@gmail.com',
+            'email':params['email'],
             'Method': params['Method']}
 
     file = { 'PDBfile': open(params['infile'], 'rb') }
     
     SAData = requests.post(url=url, data=pdbData, files=file)
     
+    countDict = {'total':0, 'i':0, 'o':0}
     
-    Gly={'total':0, 'i':0, 'o':0}
-    Gln={'total':0, 'i':0, 'o':0}
-    Ala={'total':0, 'i':0, 'o':0}
-    Tyr={'total':0, 'i':0, 'o':0}
-    Pro={'total':0, 'i':0, 'o':0}
-    All={'total':0, 'i':0, 'o':0}
+    resData = {}
+    resData['all']=cp.copy(countDict)
+    for res in AAColDict:
+        resData[res]=cp.copy(countDict)
     
     dataList =[]
     mode = 'header'
@@ -2486,46 +2951,19 @@ def GBSurfaceAnalyse(params, fileend="_SA.data", recursionDepth=0):
 
                     # if we are in analyse residues mode analyse residues
                     if recursionDepth==1:
-                        All['total']+=1
+                        resData['all']['total']+=1
                         if 'i' in l:
-                            All['i'] += 1
+                            resData['all']['i'] += 1
                         if 'o' in l:
-                            All['o'] += 1
+                            resData['all']['o'] += 1
                             
-                        if 'GLY' in l:
-                            Gly['total']+=1
-                            if 'i' in l:
-                                Gly['i'] += 1
-                            if 'o' in l:
-                                Gly['o'] += 1
-                            
-                        if 'TYR' in l:
-                            Tyr['total']+=1
-                            if 'i' in l:
-                                Tyr['i'] += 1
-                            if 'o' in l:
-                                Tyr['o'] += 1
-
-                        if 'GLN' in l:
-                            Gln['total']+=1
-                            if 'i' in l:
-                                Gln['i'] += 1
-                            if 'o' in l:
-                                Gln['o'] += 1
-
-                        if 'ALA' in l:
-                            Ala['total']+=1
-                            if 'i' in l:
-                                Ala['i'] += 1
-                            if 'o' in l:
-                                Ala['o'] += 1
-                            
-                        if 'PRO' in l:
-                            Pro['total']+=1
-                            if 'i' in l:
-                                Pro['i'] += 1
-                            if 'o' in l:
-                                Pro['o'] += 1
+                        for res in AAColDict:
+                            if res in l:
+                                resData[res]['total']+=1
+                                if 'i' in l:
+                                    resData[res]['i'] += 1
+                                if 'o' in l:
+                                    resData[res]['o'] += 1
             
             elif mode=='tail': 
                 data = l.split()[1:]
@@ -2549,24 +2987,13 @@ def GBSurfaceAnalyse(params, fileend="_SA.data", recursionDepth=0):
 
                     
     if recursionDepth==1:
-        if All['total']>0:
-            print("All: ", All, " i: ", All['i']/All['total'], " o: ", All['o']/All['total'])
+        for res in resData:
+            if resData[res]['total']>0:
+                l = 'total: ' + str(resData[res]['total']).zfill(4)
+                l += ', i: ' + str(resData[res]['i']).zfill(4)
+                l += ', o: ' + str(resData[res]['o']).zfill(4)
+                print(res, ": ", l, " i: {:8.4f}".format(resData[res]['i']/resData[res]['total']), " o: {:8.4f}".format(resData[res]['o']/resData[res]['total']))
         
-        if Gly['total']>0:
-            print("Gly: ", Gly, " i: ", Gly['i']/Gly['total'], " o: ", Gly['o']/Gly['total'])
-
-        if Gln['total']>0:        
-            print("Gln: ", Gln, " i: ", Gln['i']/Gln['total'], " o: ", Gln['o']/Gln['total'])
-
-        if Pro['total']>0:        
-            print("Pro: ", Pro, " i: ", Pro['i']/Pro['total'], " o: ", Pro['o']/Pro['total'])
-
-        if Ala['total']>0:        
-            print("Ala: ", Ala, " i: ", Ala['i']/Ala['total'], " o: ", Ala['o']/Ala['total'])
-
-        if Tyr['total']>0:        
-            print("Tyr: ", Tyr, " i: ", Tyr['i']/Tyr['total'], " o: ", Tyr['o']/Tyr['total'])
-
     totals = {'apolarArea': apolarArea,
               'polarArea': polarArea,
               'unknownArea': unknownArea,
@@ -2575,7 +3002,13 @@ def GBSurfaceAnalyse(params, fileend="_SA.data", recursionDepth=0):
               'buriedAtoms': buriedAtoms,
               'ASPZeroAtoms': ASPZeroAtoms}
     
+    [ print(item, totals[item]) for item in totals]
     print('Response from website: ', SAData)
+
+    # put a delay in to give server time to recover
+    import time as tm    
+    tm.sleep(10)    
+
 
     return totals, dataList
 
@@ -4655,18 +5088,22 @@ def replacePdbXYZ(infile, xyz, outputfile):
     return
 
 
-def replacePdbAtoms(infile, newCoords, outfile, pdb=None, atoms=None):
+def replacePdbAtoms(infile, newCoords, outfile, pdb=None, atoms=None, noCR=False):
     ''' Creates a verbatim copy of the pdb infile but with the coords replaced by the list of coords in new Atoms.
         Assumes the coords are in the same order as the pdb file atom lines and are in a list of xyz triplets.
-        works for a 2D numpy array of m x 3. '''
+        works for a 2D numpy array of m x 3. 
+        
+        Can supply a pdb and a list of atoms that was loaded already using to pdb and atoms keywords. Avoids having to load it twice. 
+        Need to supply a dummy infile if you do that. 
+        '''
 
     if atoms==None:
         # read in the atoms from the pdb
-        atoms=readAllAtoms(infile)
+        atoms = readAllAtoms(infile)
 
     if pdb==None:
         # get the raw pdb file
-        pdb=readTextFile(infile)
+        pdb = readTextFile(infile)
 
     # check the lists are compatible
     if len(atoms)!=len(newCoords):
@@ -4698,8 +5135,8 @@ def replacePdbAtoms(infile, newCoords, outfile, pdb=None, atoms=None):
  
             curCoord += 1
         
-            # generate the new line
-            newLine = pdbLineFromAtom(atom)
+            # generate the new line with or without CRs as specified when this function is called
+            newLine = pdbLineFromAtom(atom, noCR=noCR)
        
         outputlines.append(cp.copy(newLine))
 
@@ -4708,12 +5145,15 @@ def replacePdbAtoms(infile, newCoords, outfile, pdb=None, atoms=None):
     return
 
 
-def getCoordsFromAtoms(atoms):
+def getCoordsFromAtoms(atoms,asNumpyList=True):
     coords = []
     for atom in atoms: 
-        coords.append(atom[7])
-        coords.append(atom[8])
-        coords.append(atom[9])
+        if asNumpyList:
+            coords.append( np.array( [ atom[7], atom[8], atom[9] ] ) )
+        else:
+            coords.append(atom[7])
+            coords.append(atom[8])
+            coords.append(atom[9])
     return coords
 
 
@@ -4783,7 +5223,7 @@ def parseAtomGroupsFile(filename):
     return atomGroups
 
 
-def rotateVector(point,axisPoint1,axisPoint2,angle):
+def rotateVector(point, axisPoint1, axisPoint2, angle):
     ''' function takes an axis defined by two points and rotates a third point about the axis by an angle given in degrees'''
 
     # translate all points relative to the axisPoint1 and normalise the unit vector along the axis.
@@ -4810,7 +5250,10 @@ def rotateVector(point,axisPoint1,axisPoint2,angle):
     #compute and return the final rotated vector and move it back to the original frame of reference
     return newVector
 
-def rotateAtoms(atoms,group):
+# returns a new atoms array with the sub group of atoms defined in the group array rotated about an angle axis defined in group.
+# uses atoms to rotate the structure. 
+# group = [ [rotAtomIndex1, rotAtomIndex1, angle], [atomIndex1, AtomIndex2, ...]]
+def rotateAtoms(atoms, group):
     ''' Takes the group of atoms defined in the group command and rotates each one about the axis defined in the group command by the angle defined in the group command'''
     # unpack the parameters from the group command - our array is zero based, whereas number is ith entry in list, so subtract 1
     axisPoint1 = group[0][0]-1
@@ -4824,7 +5267,7 @@ def rotateAtoms(atoms,group):
  
     # loop through the atom group and rotate each atom by angle about the defined axis.
     for atom in atomGroup:
-        newAtomPos=rotateVector(np.array([atoms[atom][7], atoms[atom][8], atoms[atom][9]]),point1,point2,angle)
+        newAtomPos=rotateVector(np.array([atoms[atom][7], atoms[atom][8], atoms[atom][9]]), point1, point2, angle)
         atoms[atom][7] = newAtomPos[0]
         atoms[atom][8] = newAtomPos[1]
         atoms[atom][9] = newAtomPos[2]
@@ -5272,7 +5715,7 @@ def ramachandrans( params ):
  
     if not rama3D:
         if params['includeLegend']==1:
-            plt.legend(legendHandles, legendLabels, loc=params['legendLoc'], fontsize=params['legendFontSize'], frameon=False)
+            plt.legend(legendHandles, legendLabels, loc=params['legendLoc'], fontsize=params['legendFontSize'], ncols=int(params['legendCols']), frameon=params['legendFrame'])
             
         # set global params and behaviour for the figure
         plt.xlabel(params['xlabel'], fontsize=params['labelfontsize'])
@@ -5361,29 +5804,72 @@ def createRamaDensityPlot(heatMap, filename, settings):
     return
 
 def AllFilesRamachandran( params ):
-    for infile in glob.glob( '*.pdb'):
-        ramachandran( infile, params )
     
-def ramachandran(infile, params):
+    # check to see if we are plotting all the files on the same figure or separate figures
+    if params['superimposeFiles']:
+        # create the figure
+        fig = plt.figure(figsize=(params['figsizex'], params['figsizey']))
+    
+    # loop through each pdb in the directory
+    for infile in glob.glob( '*.pdb'):
+        if params['superimposeFiles']:    
+            ramachandran( infile, params, fig=fig )
+        else:
+            ramachandran( infile, params )
+            
+    if params['superimposeFiles']:
+        plt.savefig('allFiles_rama.png', dpi=600)
+        
+        if params['showPlot']:
+            plt.show()
+        
+        plt.close(fig)
+    
+def ramachandran(infile, params, fig=None):
     print("Reading file ", infile)
     models = readAllModels(infile)
-    
+
+    plotAsStart = False  
+    if 'init' in infile:
+        plotAsStart=True
+
+    # set up arrays to remember information across all the models in a file    
+    allResIds = [] 
+    allResNames = []
+    allPhis = []
+    allPsis = []
+
     for modelNumber in models:
     
-        print("processing model: ", modelNumber)
-        resids, resnames, phi, psi= generatePhiPsi(models[modelNumber], infile[:-4] + "_" + str(modelNumber) + '_.rama')
+        print("processing model: ", modelNumber + 1, " of ", len(models) )
+        resids, resnames, phis, psis= generatePhiPsi(models[modelNumber], infile[:-4] + "_" + str(modelNumber) + '_.rama')
     
+        [allResIds.append(resId) for resId in resids]
+        [allResNames.append(resName) for resName in resnames]
+        [allPhis.append(phi) for phi in phis]
+        [allPsis.append(psi) for psi in psis]
+
         print("create rama plot")
-        createRamaPlot(resids, resnames, phi, psi, infile[:-4] + "_" + str(modelNumber) + '_rama.png', params)
+        createRamaPlot(resids, resnames, phis, psis, infile[:-4] + "_" + str(modelNumber) + '_rama.png', params, fig=fig, plotAsStart=plotAsStart)
 
+    if int(params['superimposeModels'])==1:
+        print("create rama plot all")
+        # plots out all the models on a single plot
+        createRamaPlot(allResIds, allResNames, allPhis, allPsis, infile[:-4] + '_all_rama.png', params, fig=fig, plotAsStart=plotAsStart)
 
-def createRamaPlot(resIds, resNames, phi, psi, pngFilename, settings):
+def createRamaPlot(resIds, resNames, phi, psi, pngFilename, settings, fig=None, plotAsStart=False):
 
-    fig = plt.figure(figsize=(settings['figsizex'], settings['figsizey']))
+    # if fig is not supplied then supply it
+    if not fig:
+        fig = plt.figure(figsize=(settings['figsizex'], settings['figsizey']))
 
     # select range to plot
-    endRes = settings['endRes']
-    startRes = settings['startRes']
+    try:
+        endRes = settings['endRes']
+        startRes = settings['startRes']
+    except KeyError:
+        startRes=resIds[0]
+        endRes=resIds[-1]
     
     # cope with -ve index value for endRes index
     if endRes<0:
@@ -5398,11 +5884,16 @@ def createRamaPlot(resIds, resNames, phi, psi, pngFilename, settings):
     for resName in settings['residueSets']:
             style = settings['residueSets'][resName]
 
-            # figure out indices that match the specified conditions
-            if resName=='All':
-                plotIndices = [ i for i in range(len(phi)) if ( resIds[i]>=startRes and resIds[i]<=endRes ) ]
+            if plotAsStart:
+                if resName=='INIT': 
+                    plotIndices = [ i for i in range(len(phi)) if ( resIds[i]>=startRes and resIds[i]<=endRes ) ]
+                else:
+                    plotIndices = []    
             else:
-                plotIndices = [ i for i in range(len(phi)) if ( resNames[i]==resName and resIds[i]>=startRes and resIds[i]<=endRes ) ]
+                if resName=='All':
+                    plotIndices = [ i for i in range(len(phi)) if ( resIds[i]>=startRes and resIds[i]<=endRes ) ]
+                else:
+                    plotIndices = [ i for i in range(len(phi)) if ( resNames[i]==resName and resIds[i]>=startRes and resIds[i]<=endRes ) ]
             
             
             # plot the phi, psi points for the current subPlot                
@@ -5424,8 +5915,11 @@ def createRamaPlot(resIds, resNames, phi, psi, pngFilename, settings):
         plt.legend(legendHandles, 
                    legendLabels, 
                    loc=settings['legendLoc'], 
-                   fontsize=settings['legendFontSize'], 
-                   frameon=False)
+                   fontsize=settings['legendFontSize'],
+                   ncols=int(settings['legendCols']), 
+                   frameon=settings['legendFrame'])
+            
+                
             
     # set global params and behaviour for the figure
     plt.xlabel(settings['xlabel'], fontsize=settings['labelfontsize'])
@@ -5437,11 +5931,17 @@ def createRamaPlot(resIds, resNames, phi, psi, pngFilename, settings):
     plt.xlim([settings['phiMin'], settings['phiMax']])
     plt.ylim([settings['psiMin'], settings['psiMax']])
 
-    plt.savefig(pngFilename, dpi=600)
+    
 
-    if settings['showPlot']:
-        plt.show()
-    plt.close(fig)
+    
+    if not settings['superimposeFiles']:
+        plt.savefig(pngFilename, dpi=600)
+        
+        if settings['showPlot']:
+            plt.show()
+    
+        plt.close(fig)
+
         
 
 def createRamaPlotOrig(phi, psi, filename, settings):
@@ -5914,9 +6414,12 @@ def readAllAtoms(filename):
     return atoms
 
 
-def pdbLineFromAtom(atom):
+def pdbLineFromAtom(atom, noCR=False):
     try:
-        l='ATOM {: >06d} {: <4}{:1}{:3} {:1}{: >4d}{:1}   {: >8.3f}{: >8.3f}{: >8.3f}{: >6.2f}{: >6.2f}      {: <4}{: >2}{: >2}\n'.format(int(atom[0]), atom[1], atom[2], atom[3], atom[4], int(atom[5]), atom[6], float(atom[7]), float(atom[8]), float(atom[9]), float(atom[10]), float(atom[11]), atom[12],atom[13],atom[14])
+        if noCR:
+            l='ATOM {: >06d} {: <4}{:1}{:3} {:1}{: >4d}{:1}   {: >8.3f}{: >8.3f}{: >8.3f}{: >6.2f}{: >6.2f}      {: <4}{: >2}{: >2}'.format(int(atom[0]), atom[1], atom[2], atom[3], atom[4], int(atom[5]), atom[6], float(atom[7]), float(atom[8]), float(atom[9]), float(atom[10]), float(atom[11]), atom[12],atom[13],atom[14])
+        else:
+            l='ATOM {: >06d} {: <4}{:1}{:3} {:1}{: >4d}{:1}   {: >8.3f}{: >8.3f}{: >8.3f}{: >6.2f}{: >6.2f}      {: <4}{: >2}{: >2}\n'.format(int(atom[0]), atom[1], atom[2], atom[3], atom[4], int(atom[5]), atom[6], float(atom[7]), float(atom[8]), float(atom[9]), float(atom[10]), float(atom[11]), atom[12],atom[13],atom[14])
     except:
         print("unable to write atom to string: " )
         print(atom )
@@ -6414,21 +6917,43 @@ def writepucker(infile, params):
     return
 
 
-def removeLineList(infile, params):
+def removeLineList(inputfile, params):
+
     #unpack parameters
     rulefile = params[0]
     outfile = params[1]
  
-    #perform required operations
-    pdb=readTextFile(infile)
-    #print("pdb")
-    #print(pdb[0:3])
-  
-    itemsToRemove = readTextFile(rulefile)
-    print("itemsToRemove" )
-    print(itemsToRemove)
-    newPDB = removeLines(pdb, itemsToRemove)
-    writeTextFile(newPDB, outfile)
+    if params[2]==1:
+        print("Processing all pdbs files in directory")
+        files = glob.glob("*.pdb")
+
+        for inputfile in files:
+            outputfile = inputfile[0:-4]+'_ra.pdb'
+            print("Processing file:", inputfile, " as ", outputfile)
+            #perform required operations
+            pdb=readTextFile(inputfile)
+            #print("pdb")
+            #print(pdb[0:3])
+          
+            itemsToRemove = readTextFile(rulefile)
+            print("itemsToRemove" )
+            print(itemsToRemove)
+            newPDB = removeLines(pdb, itemsToRemove)
+            writeTextFile(newPDB, outputfile)
+    else:
+        #perform required operations
+        pdb=readTextFile(inputfile)
+        #print("pdb")
+        #print(pdb[0:3])
+        
+        itemsToRemove = readTextFile(rulefile)
+        print("itemsToRemove" )
+        print(itemsToRemove)
+        newPDB = removeLines(pdb, itemsToRemove)
+        writeTextFile(newPDB, outfile)
+
+            
+            
     return
 
 # searches a list breaking when it find the first occurence of the substring in the list  
