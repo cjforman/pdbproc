@@ -349,7 +349,7 @@ def findrotation_kearsley(x1, x2, align_com=True):
     #########################################
  
     QMAT = np.zeros([4,4], np.float64)
-    for J1 in xrange(natoms):
+    for J1 in range(natoms):
         J2 = 3* J1 -1
         XM = x1[J2+1] - x2[J2+1]
         YM = x1[J2+2] - x2[J2+2]
@@ -503,10 +503,10 @@ class StandardClusterAlignment(object):
     def __iter__(self):
         return self
  
-    def next(self):
+    def __next__(self):
         # obtain first index for first call
         if self.idx2_1 is None:
-            self.idx2_1 = self.iter1.next()
+            self.idx2_1 = self.iter1.__next__()
  
         # toggle inversion if inversion is possible
         if self.can_invert and self.invert == False and self.idx2_2 is not None:
@@ -1061,7 +1061,12 @@ class Fragment:
 
     # returns a list of all atoms in a particular chain
     def extractChainAtoms(self, chainName):
-        return [atom for atom in self.atoms if atom[4]==chainName]
+        testChainName = chainName
+
+        if chainName=='_':
+            testChainName=' '
+        
+        return [atom for atom in self.atoms if atom[4]==testChainName]
 
     def getChainLength(self, chainName):
         for chain in self.chains:
@@ -1269,7 +1274,7 @@ def validateInputConsistency(fragments, staples):
     proceed = 0
     if numFrags - numStaples != 1:
         proceed = 1
-        errorMsg = 'Wrong number of staples or fragments. nF=nS+1.'
+        errorMsg = 'Wrong number of staples or fragments. nF = nS + 1.'
 
     # could put other checks in here. But we'll find out soon enough if the data makes no sense.
     # no point in going through it twice. can add checks to crash gracefully throughout
@@ -1293,10 +1298,12 @@ def align(static, mobile):
     # check staticXYZ and mobileXYZ are the same length
     if len(staticXYZ) != len(mobileXYZ):
         print( 'Mismatch in number of residues to align between:' )
-        print( len(mobileXYZ) )
-        print( mobile.name )
+        print( len(static.postResList) )
         print( len(staticXYZ) )
         print( static.name )
+        print( len(mobile.preResList) )
+        print( len(mobileXYZ) )
+        print( mobile.name )
         sys.exit(0)
 
     # none of the atoms are permutable
@@ -1529,6 +1536,14 @@ def writeAtomGroup(axisAtom1, axisAtom2, groupAtoms, frag, group, fH):
 # build up an atom list to return as we go
 def writeChainFragmentToPDB(fH, frag, chainName, atomNumOut, resNumOut):
 
+    # specify the output chain name. THis is normally just chainName unless chainName is _ in which case output an A.
+    # total hack for a situation where a pdb has no chain names specified. Just put a _ in the definition file for
+    # chain name. Saves having to put an A into a PDB column for chain name. (For spidroin this file was 33000 records.)
+    # could have done it vi. i know. but I was on a pc. Could have done it with WSL true. But whatever.  
+    outChainName = chainName
+    if chainName=='_':
+        outChainName='A'
+
     # extract the atoms from the fragment belonging to a particular chain 
     atoms = frag.extractChainAtoms(chainName)
     # array to output list of atoms
@@ -1540,7 +1555,7 @@ def writeChainFragmentToPDB(fH, frag, chainName, atomNumOut, resNumOut):
             CPos=frag.estimateNextResidueC(chainName)
             l = 'ATOM {: >06d} {: <4}{:1}{:3} {:1}{: >4d}{:1}   {: >8.3f}{: >8.3f}{: >8.3f}\n'.format(atomNumOut, 'C', '', 'ACE', chainName, int(resNumOut),'',CPos[0],CPos[1],CPos[2])
             fH.write(l)
-            chainAtoms.append([atomNumOut, 'C', '', 'ACE', chainName, int(resNumOut), '', CPos[0], CPos[1], CPos[2], 0.0, 0.0, '', 'C', ''])
+            chainAtoms.append([atomNumOut, 'C', '', 'ACE', outChainName, int(resNumOut), '', CPos[0], CPos[1], CPos[2], 0.0, 0.0, '', 'C', ''])
             atomNumOut += 1
             resNumOut += 1
      
@@ -1565,7 +1580,7 @@ def writeChainFragmentToPDB(fH, frag, chainName, atomNumOut, resNumOut):
             atom[5] = resNumOut
     
             # set the chain
-            atom[4] = chainName
+            atom[4] = outChainName
     
             # eliminate an annoying carriage return
             atom[14] = ' '
@@ -1587,7 +1602,7 @@ def writeChainFragmentToPDB(fH, frag, chainName, atomNumOut, resNumOut):
             NPos=frag.estimateNextResidueN(chainName)
             l = 'ATOM {: >06d} {: <4}{:1}{:3} {:1}{: >4d}{:1}   {: >8.3f}{: >8.3f}{: >8.3f}\n'.format(atomNumOut, 'N', '', 'NME', chainName, int(resNumOut),'',NPos[0],NPos[1],NPos[2])
             fH.write(l)
-            chainAtoms.append([atomNumOut, 'N', '', 'NME', chainName, int(resNumOut), '', NPos[0], NPos[1], NPos[2], 0.0, 0.0, '', 'N', ''])
+            chainAtoms.append([atomNumOut, 'N', '', 'NME', outChainName, int(resNumOut), '', NPos[0], NPos[1], NPos[2], 0.0, 0.0, '', 'N', ''])
             atomNumOut += 1
             resNumOut += 1
 
@@ -1664,53 +1679,22 @@ def doRotations(rotations, atoms):
 if __name__ == '__main__':
     """ STAPLER
 
-    Complile fragments of PDB into a single protein using an instruction file containing a 
-    list of fragments and staples as appropriate.
+    Complile building block fragments of PDB into a single larger protein using an instruction file containing a 
+    list of fragments and staples as appropriate. A root building block starts the process. A staple is a fragment of 
+    protein structure that is used to align subsequent building blocks to the growing structure.
+    
+    One part of the staple fragment is aligned to the root building block.  Then the next building block is aligned to 
+    a subset of the staple. The staple is discarded and the two aligned building blocks are saved as single PDB.
+    
+    The system can cope with multiple chains but all staples and building blocks must have the same number of chains.  
+    E.g it was used to build up triple helix collagen building blocks once upon a time.     
+    
+    Command line syntax:      
 
     pdbStapler.py <instructionFile>
 
-    example instruction file: 
-    first line is the output filename.
-    A FRAGMENT keyword starts a block and specifie the data filename for that block.
+    example instruction file:
     
-    All the atoms from the input PDB are read in verbatim. They will all be read out again into the
-    new stapled object but with new coords. Each residue in the file should have a unique residue number.
-     
-    CHAIN specified the start and end residues of each chain in the fragment as identified using the numbering 
-    system in the pdb file. This is simply to help with labelling the chains in the final output PDB.
-    
-    PREV specifies a set of residues from this fragment which are to be aligned with a set of the same size in the previous object.
-    NEXT specifies a set of residues from this fragment which are to to align with a set of the same size in the next object. 
-    
-    NCAP specifies the chains which will have an N terminal acetyl cap. 
-    CCAP specifes the chains which will have an C terminal cap.
-    for the caps only a place holder N atom or C atom is inserted without specifying atomic co-ordinates. tleap can
-    add the remaining cap atoms in a sensible way.
-
-    The routine then recurses through the list. First fragment is kept fixed. the "prev" residues of the staple are aligned
-    with the set of next residues of the stationary fragment. These sets of atoms must be the same size. 
-    Same size means same num of residues, only N CA and C are aligned. 
-    
-    Then the staple in its new position is kept fixed, and the next fragment
-    is aligned with the staple. The prev residues of the fragment are aligned with the next residues of the staple. 
-
-    The alignment takes the N CA and C atoms of all the specified residues and aligns all of them  
-    at the same time.
-
-    The rotation matrix is then acquired and used to rotate all the atoms in the Fragment simultaneously.
-
-    It is up to the user to ensure the adjacent fragments/staples are consistent with each other.
-
-    All the stuff with chains is about making disparate chains in distinct fragments line up, but then be  
-    labelled in the output as continuous chains with the same letter. This was modification for collagen.
-    
-    Eg a block with three chains, can be aligned with another block containing three chains, and the output will
-    consist of three chains, each labelled separately.  
-
-    A ROTATION command species a residue in the fully stapled structure which identifies an axis between 
-    a specific C and CA bond and rotates all atoms from the C onwards to the end of the fully stapled chain
-    by that amount.  One can specify as many rotations as you like.  
- 
     OUTPUTFILE H12.pdb
 
     FRAGMENT GS.pdb
@@ -1735,7 +1719,85 @@ if __name__ == '__main__':
     NEXT 226
     NCAP None
     CCAP None
-    END"""
+    END
+    
+    ROTATION 224 180
+    
+    
+    The first line of the instruction is the output filename.
+    
+    A FRAGMENT keyword indicates the pdb file that defines a building block. Subsequent lines specifies the parameters necessary to connect the building block.
+    Each block must have a terminating END line.   
+    
+    All the atoms from the input PDB are read in verbatim and output into the final structure with new coords and index numbers. 
+    Each residue in the input file must have a unique residue number.
+     
+    CHAIN specifies the start and end residues of each chain in the fragment as identified using the native numbering 
+    system in the pdb file. This information is used to label chains correctly in the final output PDB. THe actual rotation alignment 
+    process ignores chains and simply aligns a specified set of residues with the next building block/staple in the procedure. If there is no chain name 
+    specified in the pdb use an underscore as the chain name: _ 
+    
+    As many residues as we like can be used in the alignment at each step, but the same number of residues must be specified in the connecting
+    sub sets of each building block/staple.  e.G. i can read in a 100 residue protein which might have multiple chains. All residues have their own ref number.  
+    I can specify any of the residues in the entire process to use in an alignment step.  I must specifiy the same number of residues in the next building block/staple
+    to align. There is no reason why each alignment set needs the same number of residues in every part of the process.     
+    
+    PREV specifies a set of residues from this fragment which are to be aligned with a set of the same size in the previous object.
+    NEXT specifies a set of residues from this fragment which are to to align with a set of the same size in the next object. 
+    
+    NCAP specifies the names of the chains which will have an N terminal acetyl cap. 
+    CCAP specifes the chains which will have an C terminal cap.
+    
+    For the caps only a place holder N atom or C atom is inserted without specifying atomic co-ordinates. The structure should be run through Amber tools tleap to build the 
+    terminal groups in a sensible way.  A set of after effects can be added which includes a PAG flag which will run the structure through tleap if it is installed on the 
+    system.
+
+    The routine then recurses through the list. First fragment is kept fixed. the "prev" residues of the staple are aligned
+    with the set of next residues of the stationary fragment. These sets of atoms must be the same size.  
+    Same size means same num of residues, only N CA and C are aligned. 
+    
+    Then the staple in its new position is kept fixed, and the next fragment
+    is aligned with the staple. The prev residues of the fragment are aligned with the next residues of the staple. 
+
+    The alignment takes the N CA and C atoms of all the specified residues and aligns all of them  
+    at the same time.
+
+    The rotation matrix is then acquired and used to rotate all the atoms in the Fragment simultaneously.
+
+    It is up to the user to ensure the adjacent fragments/staples are consistent with each other.
+
+    All the stuff with chains is about making disparate chains in distinct fragments line up, but then be  
+    labelled in the output as continuous chains with the same letter. This was modification for collagen.
+    
+    Eg a block with three chains, can be aligned with another block containing three chains, and the output will
+    consist of three chains, each labelled separately.  
+
+    A ROTATION command species a residue in the fully stapled structure which identifies an axis between 
+    a specific C and CA bond and rotates all atoms from the C onwards to the end of the fully stapled chain
+    by that amount.  One can specify as many rotations as you like. This is useful to help blocks from 
+    overlapping.   
+    
+    No checking of the sanity of the final structure is employed. IT's up to the user to ensure that sensible results occur.
+    
+    A set of after effects can be specified including running the structure through tleap.
+    
+    These are included as command line parameters after the main parameter file
+    
+    PAG
+    relax
+    atomgroups AGfilename
+    
+    PAG specifies that the Prepare for Amber GMin routine from PDB proc will be run on the stapler output. This generates a coords file and parameter file 
+    as well as stripped out hydrogens and populating the structure with missing heavy atoms.  
+
+    relax caused a bunch of steps to be taken with AMBGMIN. THis is hard coded for one thing I wanted to do one day. It could be generalised from this 
+    prescription.
+    
+    If an atomgroups file is request then an atomgroups file is generated using the instructions contains in the file AFGilename. This specifies regions of 
+    the final structure that can be thought of rigid building blocks for rotations.  In this way we can use building blocks and 
+    explore the structures in GMIN and OPTIM etc using the rigid bodies framework. I.e. Treat each building block input into stapler as a coarse grain, 
+    even though they are atomistic and rotate it as specified. Relax uses the GMIN system to explore the building block rotations to help find sensible structures.
+    """
 
 
     # load the instruction file which contains two lists 
@@ -1746,11 +1808,11 @@ if __name__ == '__main__':
 
     print( "Stapling the following fragments:" )
     for fragment in fragments:
-        print( fragment.name )
+        print( fragment.name , "\n")
 
     print( "\nusing the following staples:" )
     for staple in staples:
-        print( staple.name )
+        print( staple.name , "\n")
 
     print( '\nOutput filename:' )
     print( outFile )
@@ -1772,10 +1834,16 @@ if __name__ == '__main__':
         # and rotates the second one. A entirely new object is returned which is 
         # identical in all respects except with new translated and rotated atomic coordinates.
 
+        print("Perform stapling operation", curItem + 1, " of  ", numStaples)
+    
+        print("Performing Pre-Operation")
+
         # align staple to fragment
         alignedStaple = align(alignedFragments[curItem], staples[curItem])
         alignedStaples.append(alignedStaple)
 
+        print("Performing Post-Operation")
+        
         # using the previously rotated staple as a static construct, now align next fragment to that. Add aligned fragment to the list
         alignedFragment = align(alignedStaple, fragments[curItem + 1])
         alignedFragments.append(alignedFragment)
@@ -1791,8 +1859,8 @@ if __name__ == '__main__':
     # convert atoms chain to strings
     l_atoms = [pdb.pdbLineFromAtom(atom) for atom in atoms]
     
-    # write strings to file with a rot_<outfile> prefix
-    pdb.writeTextFile( l_atoms, 'rot_' + outFile)
+    # write strings to file with a rot_<outfile> suffix
+    pdb.writeTextFile( l_atoms, outFile[0:-4] + '_rot.pdb')
 
     # control behaviour from command line
     PAG = afterEffects[0]

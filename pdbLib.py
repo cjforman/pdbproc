@@ -230,6 +230,8 @@ def elementFromAtomName(aName):
         el = 'O'
     elif 'C' in aName:
         el = 'C'
+    elif 'S' in aName:
+        el = 'S'
 
     if el=='default':
         el = aName
@@ -1048,6 +1050,8 @@ def gyrationAnalysis(infile):
         f.write('R_gyr_p: ' + str(Rg_all_p) + " " + str(R_xp) + " " + str(R_yp) + " " + str(R_zp) + "\n")
         f.write('box: ' + str(pxL) + " " + str(pyL) + " " + str(pzL) + "\n")
 
+        print('Rg: ' + str(Rg_all) + "\n")
+
     return Rg_all, Rg_all_p, [pxL, pyL, pzL]
 
 
@@ -1114,6 +1118,66 @@ def funkychicken():
     ax_orig.plot(x, y, 'ro')
     fig.show()
 
+# computes a histogram of the distances between atoms. rho(r) from SAXS.
+def pairwiseAtomicDistances(infile, params):
+    print("Loading file")
+    atoms = readAtoms(infile)
+ 
+    # filter out the heavy Atoms
+    heavyAtoms = [ atom for atom in atoms if not 'H' in atom[1] ]
+ 
+    # convert positions to np vectors
+    print("Extracting position vectors")
+    positions = [ np.array([ atom[7], atom[8], atom[9]]) for atom in heavyAtoms]
+ 
+    print("Generating combinations")
+    pairs = list(iter.combinations(positions, 2))
+    
+    print("Computing", len(pairs), "Pairwise Distances in nm")
+    # compute pair wise distance between every pair of atoms in the atom list (pdbs are in angstroms so divide by 10 to get nm)  
+    dists = np.array( [ np.linalg.norm(   pair[1] - pair[0])/10.0 for pair in pairs ] )
+
+    maxDist = np.max(dists)
+
+    print("Max distance:", maxDist, "nm.")
+
+    print("Generating Histogram")
+    histData, binEdges = np.histogram(dists, bins=params['numBins'], density=True)
+    
+    binWidth = (binEdges[-1] - binEdges[0])/(len(binEdges) - 1 )
+    
+    # add a zero at the beginning of the histogram
+    histData = np.insert(histData, 0, 0.0, axis=0)
+    histData = np.append(histData, [0.0], axis=0)
+    
+    # compute bin centers and add a zero bin at the beginning
+    binCenters = (binEdges[0:-1] + binEdges[1:])/2 
+    binCenters = np.insert(binCenters, 0, 0.0, axis=0)
+    binCenters = np.append(binCenters, [binCenters[-1] + binWidth], axis=0)
+    
+    print(binEdges)
+    print(binCenters)
+    print(histData)
+    plt.figure()
+    plt.plot(binCenters, histData, color=params['linecolor'], linestyle=params['linestyle'])
+
+    plt.xlabel(params['xlabel'], fontsize=params['labelfontsize'])
+    plt.ylabel(params['ylabel'], fontsize=params['labelfontsize'])
+    title = params['title']
+    plt.title(title, fontsize=params['titlefontsize'])
+    #plt.xticks(self.settings['xticks'], fontsize=self.settings['tickfontsize'])
+    #plt.yticks(self.settings['yticks'], fontsize=self.settings['tickfontsize'])
+    plt.xticks(fontsize=params['tickfontsize'])
+    plt.yticks(fontsize=params['tickfontsize'])
+        
+    #plt.xlim([self.settings['xMin'], self.settings['xMax']])
+    #plt.ylim([self.settings['yMin'], self.settings['yMax']])
+    
+    plt.savefig(params['pngName'], dpi=600)
+    plt.show()
+
+
+# residues-residues contact distances.
 
 def pairwisedistance(infile, params):
     
@@ -1609,8 +1673,11 @@ def getCentreOfMass(listOfVectors):
 
 def inertiaTensor(points, masses='None', computeCOM=False):
     
-    if masses=='None':
-        masses = np.array(len(points) * [1])
+    try:
+        if masses=='None':
+            masses = np.array(len(points) * [1])
+    except ValueError:
+        pass
     
     if computeCOM:
         center_of_mass = np.sum(points * masses[:, np.newaxis], axis=0) / np.sum(masses)
@@ -1941,8 +2008,19 @@ def measureTubeRadiusForFile(filename, params):
     # Sum the Length of the CA Atoms 
     print("Backbone Length: ", rScale * np.sum(np.array([np.linalg.norm(a-b) for a, b in zip (CAPositions[0:-1], CAPositions[1:])])))
 
+    #ds = []
+    #with open('dumpcas.txt', "w") as fdump:
+    #    for CA1,CA2 in zip(CAPositions[0:-1], CAPositions[1:]):
+    #        fdump.write(str(np.linalg.norm(CA2-CA1)) + '\n')
+    #        ds.append(np.linalg.norm(CA2-CA1))
+
+    #print("Max ds:  ", np.max(ds))
     
     COMLine = rollingCOM( CAPositions, 150, 10)
+
+    #with open('dumpRollngCom.txt', "w") as fdump:
+    #    for P1, P2 in zip(COMLine[0:-1], COMLine[1:]):
+    #        fdump.write(str(np.linalg.norm(P2-P1)) + '\n')
 
     print("Total 150,10 Contour Length: ", rScale * np.sum(np.array([np.linalg.norm(a-b) for a, b in zip (COMLine[0:-1], COMLine[1:])])))
     print("Rg: ", RadiusOfGyration(AllAtomPositions))
@@ -2282,15 +2360,15 @@ def surfaceAnalysisComplete(infile, params):
     Rg = RadiusOfGyration( points )
         
     # computes the persistence length of the whole set of backbone atoms. 
-    pLengthAll = PersistenceLength(params['rScale'] * np.array(params['BackBonePositions']), params)
+    #pLengthAll = PersistenceLength(params['rScale'] * np.array(params['BackBonePositions']), params)
     
     # compute persistence length of the com backbone
-    pLengthComTraj = PersistenceLength(params['rScale'] * np.array(COMTraj), params)
+    #pLengthComTraj = PersistenceLength(params['rScale'] * np.array(COMTraj), params)
     
 
     # dumps information to standout.
-    print("CABackboneLength_nm, Max_CA_CA_dist_nm, Window_150_bblength_nm, Rg, P_all, P_comLength")
-    print(CABackboneLength_nm, Max_CA_CA_dist_nm, Window_150_bblength_nm, Rg, pLengthAll, pLengthComTraj)
+    print("CABackboneLength_nm, Max_CA_CA_dist_nm, Window_150_bblength_nm, Rg")#, P_all, P_comLength")
+    print(CABackboneLength_nm, Max_CA_CA_dist_nm, Window_150_bblength_nm, Rg)#, pLengthAll, pLengthComTraj)
     
     # perform COM surface analysis
     print("Tube Analysis")
@@ -2922,7 +3000,7 @@ def GBSurfaceAnalyse(params, fileend="_SA.data", recursionDepth=0):
     
     SAData = requests.post(url=url, data=pdbData, files=file)
     
-    countDict = {'total':0, 'i':0, 'o':0}
+    countDict = {'total':0, 'area':0.0, 'i':0, 'o':0}
     
     resData = {}
     resData['all']=cp.copy(countDict)
@@ -2952,6 +3030,8 @@ def GBSurfaceAnalyse(params, fileend="_SA.data", recursionDepth=0):
                     # if we are in analyse residues mode analyse residues
                     if recursionDepth==1:
                         resData['all']['total']+=1
+                        if params['Method']==2:
+                            resData['all']['area'] += float(data[2])
                         if 'i' in l:
                             resData['all']['i'] += 1
                         if 'o' in l:
@@ -2960,6 +3040,8 @@ def GBSurfaceAnalyse(params, fileend="_SA.data", recursionDepth=0):
                         for res in AAColDict:
                             if res in l:
                                 resData[res]['total']+=1
+                                if params['Method']==2:
+                                    resData[res]['area'] += float(data[2])
                                 if 'i' in l:
                                     resData[res]['i'] += 1
                                 if 'o' in l:
@@ -2990,9 +3072,10 @@ def GBSurfaceAnalyse(params, fileend="_SA.data", recursionDepth=0):
         for res in resData:
             if resData[res]['total']>0:
                 l = 'total: ' + str(resData[res]['total']).zfill(4)
+                l += ', area: {:8.02f}'.format(resData[res]['area'])
                 l += ', i: ' + str(resData[res]['i']).zfill(4)
                 l += ', o: ' + str(resData[res]['o']).zfill(4)
-                print(res, ": ", l, " i: {:8.4f}".format(resData[res]['i']/resData[res]['total']), " o: {:8.4f}".format(resData[res]['o']/resData[res]['total']))
+                print(res, ": ", l, " i: {:8.2f}".format(resData[res]['i']/resData[res]['total']), " o: {:8.2f}".format(resData[res]['o']/resData[res]['total']), res)
         
     totals = {'apolarArea': apolarArea,
               'polarArea': polarArea,

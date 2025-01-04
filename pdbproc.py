@@ -256,10 +256,16 @@ command is one of:
         the combined construct for inspection.
          
     
+    atomicpairwisedistance apwd inpPDB configfile.json
+        Computes the contact distance between all atoms in a PDB and returns a histogram of the distances. This is the 
+        quantity that when fourier transformed gives the SAXS intensity profile.  You could inverse transform the SACX profile
+        and the get the same thing.  
+       
     
     pairwisedistance pwd inpPDB configfile.json
-        Takes a PDB or a glob defined in the configfile and uses various algorithms to define sets of residues to find the 
-        distance between them. Plots a matrix of the distance of Center of mass of all CAs in all specified sets. Example config file:
+        Computes the contact distance between residues. Takes a PDB or a glob defined in the configfile and uses various algorithms to 
+        define sets of residues to find the distance between them. Plots a matrix of the distance of Center of mass of all CAs in all 
+        specified sets.
         
            
     
@@ -317,6 +323,9 @@ command is one of:
         Specifies the ring tip groups for rotating about the CD-CB axis for changing state 
         between endo and exo. If OH flag is not zero also outputs the OH group rotations.
         Scale Fac scales the rotation factor. probRot is the probability of a rotation occurring.
+
+    RadiusOfGyration rg inpfile
+        computes radius of gyration of a pdb structure
         
     ramachandran or rmc inpfile, configFile
         Makes a ramachandran plot of the pdb file.  the plot settings are controlled via the configFilej JSON
@@ -679,12 +688,19 @@ command is one of:
             print("Must specify inpfile, modelfile and configfile:  tm inpfile model config.json")
             exit(1)
 
-
     elif command in ['gyrationAnalysis', 'gyrA']:
         if len(sys.argv)!=3:
             print("gyrA: Must specify inpfile:  gyrA inpfile")
             exit(1)
 
+    elif command in ['atomicpairwisedistance', 'apwd']:
+        if len(sys.argv)==4:
+            with open(sys.argv[3], "r") as f: 
+                params=json.load(f)
+            print("apwd params: ", params)
+        else:
+            print("atomicpairwisedistance: Must specify default pdb inpfile and configfile:  apwd inpfile config.json")
+            exit(1)
 
     elif command in ['pairwisedistance', 'pwd']:
         if len(sys.argv)==4:
@@ -1216,6 +1232,9 @@ if __name__ == '__main__':
 
         elif command in ['pairwisedistance', 'pwd']:
             pl.pairwisedistance(infile, params)
+
+        elif command in ['atomicpairwisedistance', 'apwd']:
+            pl.pairwiseAtomicDistances(infile, params)
         
         elif command in ['concatenatePDBS', 'cpdbs']:
             pl.concatenatePdbs(infile, params)
