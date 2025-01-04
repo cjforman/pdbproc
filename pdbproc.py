@@ -266,8 +266,6 @@ command is one of:
         Computes the contact distance between residues. Takes a PDB or a glob defined in the configfile and uses various algorithms to 
         define sets of residues to find the distance between them. Plots a matrix of the distance of Center of mass of all CAs in all 
         specified sets.
-        
-           
     
     prepAmberGmin or PAG inpfile rulefile forcefield [prepFile] [paramsFile]
         rulefile can be: 

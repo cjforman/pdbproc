@@ -1137,6 +1137,7 @@ def pairwiseAtomicDistances(infile, params):
     # compute pair wise distance between every pair of atoms in the atom list (pdbs are in angstroms so divide by 10 to get nm)  
     dists = np.array( [ np.linalg.norm(   pair[1] - pair[0])/10.0 for pair in pairs ] )
 
+    # residues-residues contact distances.
     maxDist = np.max(dists)
 
     print("Max distance:", maxDist, "nm.")
@@ -1177,8 +1178,7 @@ def pairwiseAtomicDistances(infile, params):
     plt.show()
 
 
-# residues-residues contact distances.
-
+# residues-residues contact distances. 
 def pairwisedistance(infile, params):
     
     print("Loading file")

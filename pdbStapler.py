@@ -1535,6 +1535,14 @@ def writeAtomGroup(axisAtom1, axisAtom2, groupAtoms, frag, group, fH):
 # and outputs to a PDB, capping the top or bottom if instructed to do so
 # build up an atom list to return as we go
 def writeChainFragmentToPDB(fH, frag, chainName, atomNumOut, resNumOut):
+    
+    # specify the output chain name. THis is normally just chainName unless chainName is _ in which case output an A.
+    # total hack for a situation where a pdb has no chain names specified. Just put a _ in the definition file for
+    # chain name. Saves having to put an A into a PDB column for chain name. (For spidroin this file was 33000 records.)
+    # could have done it vi. i know. but I was on a pc. Could have done it with WSL true. But whatever.  
+    outChainName = chainName
+    if chainName=='_':
+        outChainName='A'
 
     # specify the output chain name. THis is normally just chainName unless chainName is _ in which case output an A.
     # total hack for a situation where a pdb has no chain names specified. Just put a _ in the definition file for
@@ -1693,7 +1701,7 @@ if __name__ == '__main__':
 
     pdbStapler.py <instructionFile>
 
-    example instruction file:
+    example instruction file: 
     
     OUTPUTFILE H12.pdb
 
@@ -1791,8 +1799,8 @@ if __name__ == '__main__':
     as well as stripped out hydrogens and populating the structure with missing heavy atoms.  
 
     relax caused a bunch of steps to be taken with AMBGMIN. THis is hard coded for one thing I wanted to do one day. It could be generalised from this 
-    prescription.
-    
+    prescription. 
+
     If an atomgroups file is request then an atomgroups file is generated using the instructions contains in the file AFGilename. This specifies regions of 
     the final structure that can be thought of rigid building blocks for rotations.  In this way we can use building blocks and 
     explore the structures in GMIN and OPTIM etc using the rigid bodies framework. I.e. Treat each building block input into stapler as a coarse grain, 
@@ -1843,7 +1851,6 @@ if __name__ == '__main__':
         alignedStaples.append(alignedStaple)
 
         print("Performing Post-Operation")
-        
         # using the previously rotated staple as a static construct, now align next fragment to that. Add aligned fragment to the list
         alignedFragment = align(alignedStaple, fragments[curItem + 1])
         alignedFragments.append(alignedFragment)
