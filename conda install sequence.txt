@@ -1,0 +1,4 @@
+conda create --name pdbproc python=3.9
+conda install numpy scipy matplotlib networkx cython
+conda install -c conda-forge pyvista periodictable tensorflow
+conda install -c anaconda scikit-learn

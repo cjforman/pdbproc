@@ -221,6 +221,15 @@ command is one of:
         of residue 
         2 = Each of the twenty residues and IMB for PLPs -> A unique atom. 
 
+    measureTubeRadius mtr inpfile config.json
+        Takes a pdb, loads it in and and finds the CAs. Takes the COM average of n residues and sweeps along the structure in steps of m.
+        approximates a line of best fit to each m long section of the COM axis. 
+        Computes the distance of each residue in each section from the axis and counts how many residues are in each cylindrical bin creating a sigmoidal plot.
+        Plots all the sigmoidal plots along the whole system on top of each other.
+        Plots the distance of each residue against the residue number and colors each resiude.     
+    
+    
+
     modifySequence or MS  inpPDB newSequence startResidue [outputfile]
         Replaces the sequence names in inpPDB with the sequence in the file newSequence
         starting from the startresidue in the input file. The side chain atoms of 
@@ -239,11 +248,24 @@ command is one of:
 
         see readSequence Command
     
+    multimerRg mrg inpfile config.json
+    
+        Places multiple copies of a pdb structure close to each other and computes the Rg of the combined structure.
+        The first PDB is centered at the origin without reorientation. Must define the relative position and orientation 
+        of each copy in the lab frame. There's no checking for overlap. It just blindly follows the translation and then dumps
+        the combined construct for inspection.
+         
+    
+    atomicpairwisedistance apwd inpPDB configfile.json
+        Computes the contact distance between all atoms in a PDB and returns a histogram of the distances. This is the 
+        quantity that when fourier transformed gives the SAXS intensity profile.  You could inverse transform the SACX profile
+        and the get the same thing.  
+       
+    
     pairwisedistance pwd inpPDB configfile.json
-        Takes a PDB or a glob defined in the configfile and uses various algorithms to define sets of residues to find the 
-        distance between them. Plots a matrix of the distance of Center of mass of all CAs in all specified sets. Example config file:
-        
-           
+        Computes the contact distance between residues. Takes a PDB or a glob defined in the configfile and uses various algorithms to 
+        define sets of residues to find the distance between them. Plots a matrix of the distance of Center of mass of all CAs in all 
+        specified sets.
     
     prepAmberGmin or PAG inpfile rulefile forcefield [prepFile] [paramsFile]
         rulefile can be: 
@@ -299,11 +321,14 @@ command is one of:
         Specifies the ring tip groups for rotating about the CD-CB axis for changing state 
         between endo and exo. If OH flag is not zero also outputs the OH group rotations.
         Scale Fac scales the rotation factor. probRot is the probability of a rotation occurring.
+
+    RadiusOfGyration rg inpfile
+        computes radius of gyration of a pdb structure
         
     ramachandran or rmc inpfile, configFile
         Makes a ramachandran plot of the pdb file.  the plot settings are controlled via the configFilej JSON
     
-    ramachandrans or rmcs inpfile, configFile
+    ramachandrans or rmcs inpfile, inpdir, configFile
         Makes a ramachandran plot of each file in a glob defined in the inpDir.
         ignores inpFile, but does test that it exists for backwards compatibility
         The plot settings are controlled via the configFile in json format as for ramachandran
@@ -398,6 +423,11 @@ command is one of:
         that sequence. Outputs the segment of each pdbs that matches the sequence perfectly as a new pdb with the 
         same file name that it came from plus the first 10 letters of the sequence.
     
+    solvExposure solE inpfile config.json 
+    
+        Loads in input file and submits the pdb to a website for solvent based analysis, returning a report 
+        on which residues are solvent exposed.
+    
     sortRes or sR inpfile sortFile [outfile]
         Outputs the residues in the infile in the order specified in the sortFile and then 
         renumbers residues starting at 1. looks for inpFile or inpFile.pdb and if outfile is not specified
@@ -406,6 +436,11 @@ command is one of:
     spherowrap or sw inpfile config.json
     
         creates a minimal segmented spherocylinder as an envelope around the collection of points stored in the pdb file. 
+    
+    surfaceAnalysisComplete sac inpfile config.json
+        Performs both tubule and GB analysis of a PDB and outputs a complete summary, including a plot of contour length 
+        with different averages and intervals for a given PDB. 
+    
     
     surfaceFindGB sfg inpfile config.json 
     
@@ -544,6 +579,16 @@ command is one of:
             print("dumpParticularAtoms: Must specify inpfile and configfile:  dap inpfile config.json")
             exit(1)
 
+    elif command in ['measureTubeRadius','mtr']:
+        if len(sys.argv)==4:
+            with open(sys.argv[3], "r") as f: 
+                params=json.load(f)
+            print("mtr params: ", params)
+        else:
+            print("measure tube radius : Must specify inpfile and configfile:  mtr inpfile config.json")
+            exit(1)
+
+
     elif command in ['GanTrain', 'gt']:
         if len(sys.argv)==5:
             with open(sys.argv[4], "r") as f: 
@@ -575,6 +620,15 @@ command is one of:
             print("Must specify inpfile, inputDirectory and outputDirectory:  ssfs inpfile inputDirectory outputDirectory")
             exit(1)
 
+    elif command in ['surfaceAnalysisComplete','sac']:
+        if len(sys.argv)==4:
+            with open(sys.argv[3], "r") as f: 
+                params=json.load(f)
+            print("sac params: ", params)
+        else:
+            print("Must specify inpfile and configfile:  sac inpfile config.json")
+            exit(1)
+
 
     elif command in ['surfaceFindTube','sft']:
         if len(sys.argv)==4:
@@ -602,6 +656,15 @@ command is one of:
         else:
             print("Must specify inpfile and configfile:  sf inpfile config.json")
             exit(1)
+            
+    elif command in ['solvExposure', 'solE', 'sole']:
+        if len(sys.argv)==4:
+            with open(sys.argv[3], "r") as f: 
+                params=json.load(f)
+            print("sf params: ", params)
+        else:
+            print("Solve Exposure: Must specify inpfile and configfile:  sole inpfile config.json")
+            exit(1)
 
     elif command in ['trajectoryCluster', 'tc']:
         if len(sys.argv)==5:
@@ -623,12 +686,19 @@ command is one of:
             print("Must specify inpfile, modelfile and configfile:  tm inpfile model config.json")
             exit(1)
 
-
     elif command in ['gyrationAnalysis', 'gyrA']:
         if len(sys.argv)!=3:
             print("gyrA: Must specify inpfile:  gyrA inpfile")
             exit(1)
 
+    elif command in ['atomicpairwisedistance', 'apwd']:
+        if len(sys.argv)==4:
+            with open(sys.argv[3], "r") as f: 
+                params=json.load(f)
+            print("apwd params: ", params)
+        else:
+            print("atomicpairwisedistance: Must specify default pdb inpfile and configfile:  apwd inpfile config.json")
+            exit(1)
 
     elif command in ['pairwisedistance', 'pwd']:
         if len(sys.argv)==4:
@@ -712,6 +782,15 @@ command is one of:
             print("convertseq: Must specify inpfile and seq flle:  cs inpfile seqfile")
             exit(1)
         params = sys.argv[3]         
+
+    elif command in ['multimerRg', 'mrg']:
+        if len(sys.argv)==4:
+            with open(sys.argv[3], "r") as f: 
+                params=json.load(f)
+            print("mrg params: ", params)
+        else:
+            print("multimerRg: Must specify default pdb inpfile and configfile:  mrg inpfile config.json")
+            exit(1)
         
     elif command in ['spherowrap', 'sw']:
         if len(sys.argv)!=4:
@@ -788,8 +867,9 @@ command is one of:
     # ramachandran 
     elif command in ['ramachandran', 'rmc', 'rama']:
         if len(sys.argv)==4:
-            params = [ sys.argv[3] ]
-            print("ramachandran plot: pdbFile: " + sys.argv[2] + ", figure Config:" + sys.argv[3])
+            with open(sys.argv[3], "r") as f: 
+                params=json.load(f)
+            print("rama params: ", params)            
         else:
             print(" usage:  pdbproc rama <infile.pdb> <figConfig.json>")
 
@@ -1071,30 +1151,29 @@ command is one of:
     #### REMOVE ATOMS    
     elif command in ['removeatoms', 'ra']:
         if len(sys.argv)<4:
-            print("removeatoms: you must specify a rule file and an input PDB file.")
+            print("removeatoms: you must specify a rule file and an input PDB file, and optionally an output file")
             print(usage)
             exit(1)
-        else:
-            params.append(sys.argv[3])
-            try:
-                vst=open(params[0],'r')
-                vst.close()
-            except:
-                try:
-                    testfile=params[0]+'.lines'
-                    vst=open(testfile,'r')
-                    params[0]=testfile
-                    vst.close()
-                except:
-                    print("Unrecognised input filename:"+params[0]+" or "+params[0]+".lines")
-                    exit(1)
+        
         if len(sys.argv)==4:
-            params.append( pl.fileRootFromInfile(infile) + '_short.pdb' )
-        else:
-            params=sys.argv[4]
-            print("ra params: ")
-            print(params)
- 
+            params.append(sys.argv[3])
+            params.append(sys.argv[3][0:-4]+'_ra.pdb')
+            params.append(0)
+           
+        if len(sys.argv)==5:
+            params.append(sys.argv[3])
+            params.append(sys.argv[4])
+            params.append(0)
+        
+        if len(sys.argv)==6:
+            params.append(sys.argv[3])
+            params.append(sys.argv[4])
+            params.append(int(sys.argv[5]))
+            
+        
+        print("ra params: ")
+        print(params)
+
     #### WRITE PUCKER
     elif command in ['writepucker', 'wp']:
         if len(sys.argv)<4:
@@ -1151,6 +1230,9 @@ if __name__ == '__main__':
 
         elif command in ['pairwisedistance', 'pwd']:
             pl.pairwisedistance(infile, params)
+
+        elif command in ['atomicpairwisedistance', 'apwd']:
+            pl.pairwiseAtomicDistances(infile, params)
         
         elif command in ['concatenatePDBS', 'cpdbs']:
             pl.concatenatePdbs(infile, params)
@@ -1204,6 +1286,9 @@ if __name__ == '__main__':
         elif command in ['makeXYZForBlender','mXB','mxb']:
             pl.makeXYZForBlender(infile, params[0], params[1], params[2])
         
+        elif command in ['multimerRg', 'mrg']:
+            pl.multimerRg(infile, params)
+        
         elif command in ['fixchirality','fc','FC','fC','FC']:
             pl.fixchirality(infile, params)
         
@@ -1225,8 +1310,11 @@ if __name__ == '__main__':
         elif command in ['GanCompare', 'gc']:
             pl.GanCompare(**params)        
 
+        elif command in ['measureTubeRadius','mtr']:
+            pl.measureTubeRadius(infile, params)
+
         elif command in ['ramachandran', 'rmc', 'rama']:
-            pl.ramachandran(infile, params[0])
+            pl.ramachandran(infile, params)
 
         elif command in ['ramadensity', 'rmd', 'ramad']:
             pl.ramaDensity(infile, params)
@@ -1258,6 +1346,9 @@ if __name__ == '__main__':
         elif command in ['dumpCAsAsPDB', 'dCA']:
             pl.dumpCAsAsPDB(infile)
         
+        elif command in ['surfaceAnalysisComplete','sac']:
+            pl.surfaceAnalysisCompleteGlob(infile, params)
+
         elif command in ['surfaceFindGB','sfg']:
             pl.surfaceFindGB(infile, params)
 
@@ -1266,6 +1357,9 @@ if __name__ == '__main__':
         
         elif command in ['surfacesFind','sfs']:
             pl.surfacesFind(infile, params)
+
+        elif command in ['solvExposure', 'solE', 'sole']:
+            pl.solventExposure(infile, params)
             
         elif command in ['proToHyp','ph','pH','Ph','PH']:
             pl.proToHyp(infile,params[0],params[1])
