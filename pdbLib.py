@@ -22,9 +22,10 @@ import periodictable as PT
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 import pickle
-from tensorflow.random import normal
-from tensorflow import keras as K, expand_dims
-from tensorflow.compat.v1 import keras as TK
+# Only need tensor flow if you're gonna use the GPT system in here. It's a mission to install so I grey it out most the time. 
+#from tensorflow.random import normal
+#from tensorflow import keras as K, expand_dims
+#from tensorflow.compat.v1 import keras as TK
 
 # A global dictionary containing the information on which side groups can rotate for the various amino acids.
 # don't include the rotation axis in the list of atoms 
@@ -196,7 +197,8 @@ atomnamesToElement = {
     'HA2':"H",
     'HA3':"H",
     'HN':"H",
-    'HA':"H"}
+    'HA':"H",
+    'SG':"S"}
 
 class Arrow3D(FancyArrowPatch):
     def __init__(self, xs, ys, zs, *args, **kwargs):
@@ -227,6 +229,8 @@ def elementFromAtomName(aName):
         el = 'O'
     elif 'C' in aName:
         el = 'C'
+    elif 'S' in aName:
+        el = 'S'
 
     if el=='default':
         el = aName
@@ -1044,6 +1048,11 @@ def gyrationAnalysis(infile):
         f.write('R_gyr_xyz: ' + str(Rg_all) + " " + str(R_x) + " " + str(R_y) + " " + str(R_z) + "\n")
         f.write('R_gyr_p: ' + str(Rg_all_p) + " " + str(R_xp) + " " + str(R_yp) + " " + str(R_zp) + "\n")
         f.write('box: ' + str(pxL) + " " + str(pyL) + " " + str(pzL) + "\n")
+    
+    print(f"Rg about xyz axes_Rg Rgx Rgy Rgz: {Rg_all}  {R_x} {R_y} {R_x}")
+    print(f"Rg about principal Axes Rg RgPx RgPy RgPz: {Rg_all_p}  {R_xp} {R_yp} {R_xp}")        
+    print(f"Bounding box: {pxL} {pyL} {pzL}")        
+        
 
     return Rg_all, Rg_all_p, [pxL, pyL, pzL]
 
