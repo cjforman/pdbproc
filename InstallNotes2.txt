@@ -1,0 +1,55 @@
+installing pdbproc from scratch
+
+install eclipse C/C++ edition.
+Add pydev.
+Install anaconda - don't use appdata/local - messes with tensorflow script. I used users/<user>/anaconda3
+
+Fire up conda power shell
+Create pdbproc environment as follows:
+
+Most of pdbproc does not need tensorflow. If you want to use the GPT protein functions then install tensorflow and uncomment the import lines in pdblib.y
+
+In the base environment:
+
+conda install mamba
+
+conda create -n pdbproc tensorflow
+This installs scipy and numpy via tensorflow, also this creates python 3.10 as of 4/10/23
+
+otherwise use this line
+ 
+if using pydev need python 3.10
+
+conda create -n pdbproc python=3.10
+conda activate pdbproc
+
+
+requirements: 
+
+mamba install -c conda-forge numpy scipy matplotlib networkx pyvista scikit-learn periodictable
+
+
+
+cd main project source directory for eclipse
+
+git clone https://github.com/cjforman/pdbproc.git pdbproc
+
+conda develop "project source directory/pdbproc"
+or just drop a .pth file into the pdbproc/env/Lib/site-packages folder
+
+In eclipse:
+
+Create new interpreter as follows:
+window->preferences->pydev->interpreters 
+
+select New
+
+navigate to python for anaconda3/envs/pdbproc/python.exe
+
+Apply and close
+
+rename pdbproc python as interpreter. 
+
+if using pydey need to use python 3.10
+
+conda install -c conda-forge imp
