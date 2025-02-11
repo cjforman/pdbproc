@@ -1003,8 +1003,84 @@ def dumpParticularAtoms(infile, params):
     print("Writing Atoms")
     writeAtomsToTextFile(newAtoms, filename)
 
+
+def parse_pdb_coords_type_generator(file_path):
+    """
+    Generator to parse PDB file line by line and yield coordinates and atom names.
+    """
+    with open(file_path, 'r') as file:
+        for line in file:
+            if line.startswith(('ATOM', 'HETATM')):
+                x = float(line[30:38].strip())
+                y = float(line[38:46].strip())
+                z = float(line[46:54].strip())
+                atom = line[76:78].strip()  # Atom name is typically here
+                yield x, y, z, atom
+
+def parse_xyz_coords_type_generator(file_path):
+    """
+    Generator to parse xyz file line by line and yield coordinates and atom names.
+    """
+    with open(file_path, 'r') as file:
+        # Skip the first two lines (header and comment lines, typical in XYZ files)
+        next(file)  # Skip atom count line
+        next(file)  # Skip comment line
+        
+        for line in file:
+            parts = line.split()
+            if len(parts) == 4:  # Ensure correct format
+                atom = parts[0]
+                x, y, z = map(float, parts[1:4])
+                yield x, y, z, atom
+
+
+# this version is waaay faster. parsing the atoms array and loading it in takes forever. This method uses
+# a generator and only reads in the bits it needs.
+# it weirdly adds in a second file if you include it because I was trying to do something fancy with full 
+# and empty aav. All you need to do is add an xyz file at the command line and it will merge the two files 
+# atoms and compute combined Rg.  
+def gyrationAnalysis(infile, auxiliaryFile=None):
+
+    # quick look up atomic data
+    atomic_masses = {
+        'H': 1.008, 'C': 12.011, 'N': 14.007, 'O': 15.999, 'S': 32.06, 'P':30.97
+    }
+
+    print("loading file as list")
+    
+    # Example: Load data using directory directly into a data list 
+    if auxiliaryFile:
+        data = list(parse_pdb_coords_type_generator(infile)) + list(parse_xyz_coords_type_generator(auxiliaryFile))
+    else:
+        data = list(parse_pdb_coords_type_generator(infile))
+        
+    print("Extracting coords from data")
+    coords = np.array([(x/10.0, y/10.0, z/10.0) for x, y, z, _ in data], dtype=np.float32)
+    
+    print("Extracting masses from data")
+    masses = np.array([atomic_masses.get(atom, 0) for _, _, _, atom in data], dtype=np.float32)  # Default to 0 if atom is unknown
+
+    if 0.0 in masses:
+        print("Woahning: there's a zero mass atom")
+    else:    
+        print("No zero mass atoms were found.")
+    
+    print("Computing Rg")
+    # Calculate center of mass (COM)
+    total_mass = masses.sum()
+    com = np.sum(coords.T * masses, axis=1) / total_mass
+    
+    # Calculate radius of gyration
+    rg_squared = np.sum(masses * np.sum((coords - com) ** 2, axis=1)) / total_mass
+    rg = np.sqrt(rg_squared)
+    
+    print(f"Radius of gyration {rg:.3f} nm, total mass:  {total_mass} Da")
+
+    saveXYZ(coords/10.0, 'junky.xyz', np.array([atom for _, _, _, atom in data]), 0, "silly junk ")
+
+
 # computes the radius of gyration of a structure, about the principal moments of inertia. 
-def gyrationAnalysis(infile):
+def gyrationAnalysis2(infile):
 
     atoms = readAtoms(infile)
     
@@ -1016,6 +1092,8 @@ def gyrationAnalysis(infile):
     outfile = os.path.join(infile[0:-4], infile[0:-4] + '.rg')
     # pdbs in angstroms, convert to nm so answer is in nm.
     points = 0.1*np.array([ np.array([float(r[7]), float(r[8]), float(r[9])]) for r in atoms ])
+
+    RgNominal = RadiusOfGyration(points)
 
     # assume masses all the same
     #masses = np.array(len(points)*[1.0])
@@ -1050,12 +1128,10 @@ def gyrationAnalysis(infile):
         f.write('R_gyr_p: ' + str(Rg_all_p) + " " + str(R_xp) + " " + str(R_yp) + " " + str(R_zp) + "\n")
         f.write('box: ' + str(pxL) + " " + str(pyL) + " " + str(pzL) + "\n")
     
-    print(f"Rg about xyz axes_Rg Rgx Rgy Rgz: {Rg_all}  {R_x} {R_y} {R_x}")
-    print(f"Rg about principal Axes Rg RgPx RgPy RgPz: {Rg_all_p}  {R_xp} {R_yp} {R_xp}")        
+    print(f"Rg about xyz axes. Rg Rgx Rgy Rgz: {Rg_all}  {R_x} {R_y} {R_x}")
+    print(f"Rg about principal Axes: Rg RgPx RgPy RgPz: {Rg_all_p}  {R_xp} {R_yp} {R_xp}")        
     print(f"Bounding box: {pxL} {pyL} {pzL}")        
-        
-
-        print('Rg: ' + str(Rg_all) + "\n")
+    print(f"Nominal Rg: {RgNominal}")
 
     return Rg_all, Rg_all_p, [pxL, pyL, pzL]
 
