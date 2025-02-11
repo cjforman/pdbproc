@@ -2,3 +2,5 @@ conda create --name pdbproc python=3.9
 conda install numpy scipy matplotlib networkx cython
 conda install -c conda-forge pyvista periodictable tensorflow
 conda install -c anaconda scikit-learn
+echo "/mnt/d/Dropbox/Source/pdbproc" > /home/cjforman41/anaconda3/envs/pdbproc/lib/python3.13/site-packages/pdbproc.pth
+echo "/mnt/d/Dropbox/Source/Utilities/" >> /home/cjforman41/anaconda3/envs/pdbproc/lib/python3.13/site-packages/pdbproc.pth
