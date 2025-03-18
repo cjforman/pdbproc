@@ -748,8 +748,11 @@ command is one of:
             exit(1)
 
     elif command in ['gyrationAnalysis', 'gyrA']:
-        if len(sys.argv)!=3:
+        if len(sys.argv)==3 or len(sys.argv)==4:
+            pass
+        else:
             print("gyrA: Must specify inpfile:  gyrA inpfile")
+            print("or gyrA: Must specify inpfile:  gyrA inpfile auxfile.xyz")
             exit(1)
 
     elif command in ['atomicpairwisedistance', 'apwd']:
@@ -1324,7 +1327,14 @@ if __name__ == '__main__':
             pl.generateFreezeDryGroups(infile, int(params[0]), int(params[1]), float(params[2]), bool(params[3]) )
 
         elif command in ['gyrationAnalysis', 'gyrA']:
-            pl.gyrationAnalysis(infile)
+            print(sys.argv)
+            try:
+                if sys.argv[3]:
+                    print(f"two file route: {infile}, {sys.argv[3]}")
+                    pl.gyrationAnalysis(infile, auxiliaryFile=sys.argv[3])
+            except IndexError:
+                print(f"one file route: {infile}")
+                pl.gyrationAnalysis(infile)
         
         elif command in ['eliminateCIS', 'eCIS']:
             pl.eliminateCIS(infile)
