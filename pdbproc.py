@@ -374,6 +374,12 @@ command is one of:
         Returns the helical parameters of the collagen structure in the given pdb. Ignores capRes residues at either end of each chain in inpfile.
         FIgure plots the data from the fitting routine as we go. (slows things down Massively!). outfile specifies the output file name
 
+    relabelChains rlc inpfile 
+
+        Relabels each chain starting at 1 to the end of the label. And gives each unique chain a letter starting at A. 
+        Chains are denoted by inclusion of a TER statement between the chain blocks in the input. The output file name is the
+        input file name with _ren appended. eg.  frank.pdb becomes frank_ren.pdb
+
     removeAtoms or ra inpfile rulefile [outfile]
         loads a pdb file and removes lines which match the specifications and then rewrites the pdb file. 
         looks first for infile or infile.pdb and loads it. 
@@ -409,6 +415,34 @@ command is one of:
     residueInfo or RI or ri inpfile [outfile]
         takes a PDB and generates the per residue information such as torsionAngles, chi values and pucker status
 
+    rotateGroupsFast RGF rgf inpfile config.json:
+        Much faster routine for loading and rotating groups with in a PDB.  The config file contains a json of rotation information and groups.
+        {
+          'rot_group_name1': {
+                              "residue_list": "1,2,3,4-100,1001", 
+                              "axis_residue": "400", 
+                              "axis_bond": "C", 
+                              "angle": degs}
+                              
+          'rot_group_name2': {'residue_list': "200,201,210-300,1002", "axis_residue": "402", axis_bond: "N"}, "angle": degs}
+        }
+        
+        Each rotation group is given a name which is the key for the rotation dictionary
+        Each rotation group is processed cumulatively on the data and saved in a new file with each new rotation applied to the previous rotation.  
+        Each rotation dictionary has:
+            
+            a residue list defining the residues that are to be rotated. You may specify any combination of 
+            individual residues or use hypens to denote a range which include the end points.
+            
+            an axis residue which defined the residue that contains the bond around which the group will be rotated
+            
+            a bond 'C' or 'N'.  This defines whether its the C-CA or CA-N bond around which the group will be rotated.  
+            
+            If the residue containing the rotation bond is the first or last residue in the specified list then 
+            only relevant atoms will be rotated in that group.
+
+            Much faster algorithm that the other rotationGroups.      
+        
     rotateGroup or RG or rg inpfile atomGroup [outfile]
         rotates all the atomgroups defined in the atomgroups file by angle specified in the atom groups file.
         This is a change to the conventional meaning of the parameter in the atomgroups file. The indicies are 
@@ -427,6 +461,18 @@ command is one of:
     
         Loads in input file and submits the pdb to a website for solvent based analysis, returning a report 
         on which residues are solvent exposed.
+        
+        Makes use of pymol to load and save the file nicely. Do:  conda install -c conda-forge -c schrodinger pymol-bundle
+        
+        Also use the removeAtoms command with a rule file to eliminate H NME and ACE's.  Use the following config.json: 
+        obvs with your own email. 
+        
+        { 
+          "waterRadius": 1.4,
+          "Method": 4,
+          "email": "xyz@pqr.org",
+          "processAllPdbsInDir":1
+        }
     
     sortRes or sR inpfile sortFile [outfile]
         Outputs the residues in the infile in the order specified in the sortFile and then 
@@ -609,6 +655,21 @@ command is one of:
         else:
             print("Must specify dummyInpFile trainSetDir, testSetDir and config.json:  gc inpFile trainSetDir testSetDir config.json")
             exit(1)
+
+    elif command in ['relabelChains','rlc']:
+        if len(sys.argv) != 2:
+            print("Usage: pdbproc.py input.pdb")
+            exit(1)
+
+    elif command in ['rotategroupfast','rgf']:
+        if len(sys.argv)==3:
+            with open(sys.argv[2], "r") as f: 
+                params=json.load(f)
+            print("rgf params: ", params)
+        else:
+            print("pdbproc.py rotategroupfast inpfile config.json")
+            exit(1)
+
 
     elif command in ['scanSetForSequence', 'ssfs']:
         if len(sys.argv)==5:
@@ -1312,6 +1373,9 @@ if __name__ == '__main__':
 
         elif command in ['measureTubeRadius','mtr']:
             pl.measureTubeRadius(infile, params)
+        
+        elif command in ['relabelChain', 'rlc']:
+            relabel_chains(infile, infile[0:-4] + '_ren.pdb'):
 
         elif command in ['ramachandran', 'rmc', 'rama']:
             pl.ramachandran(infile, params)
@@ -1411,7 +1475,13 @@ if __name__ == '__main__':
         
         elif command in ['rotateGroup', 'RG', 'rg']:
             pl.rotateGroup(infile,params[0],params[1])
-        
+
+       elif command in ['rotateGroupFast', 'RGF', 'rgf']:
+            pl.rotate_groups_fast(infile,params[0],params[1])
+
+        elif command in ['rotateGroupsFast', 'RGF', 'rgf']:
+            pl.rotate_groups_fast(infile, params)
+
         elif command in ['replacePdbXyz', 'xyz2pdb']:
             pl.replacePdbXYZ(infile,params[0],params[1])
         else:

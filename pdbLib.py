@@ -2942,6 +2942,7 @@ def measureDistancesToSurfaceCloud(surfPoints, allPoints, neighborHood=100, spac
     
     return allPoints_mesh['implicit_distance']
 
+# to use use pymol do:  conda install -c conda-forge -c schrodinger pymol-bundle 
 def solventExposure(commandLineInpfile, params):
     if params['processAllPdbsInDir']:
         print("Processing all PDBs in dir")
@@ -2969,6 +2970,7 @@ def solventExposure(commandLineInpfile, params):
             print("Error with file:", inpfile, ". Moving on.") 
             pass
 
+# this does weird stuff to the pdbs. cut it out 
 def pymolLoadSave(inpfile, outputfile):        
     import __main__, sys
     __main__.pymol_argv = ['pymol','-qc']
@@ -5264,6 +5266,27 @@ def replaceAtoms(atoms, newCoords):
     return newAtoms
 
 
+def parse_pdb_line(line):
+    return {
+        'line': line,
+        'record': line[0:6].strip(),
+        'atom_number': int(line[6:11]),
+        'atom_name': line[12:16].strip(),
+        'alt_loc': line[16],
+        'res_name': line[17:20].strip(),
+        'chain_id': line[21],
+        'res_seq': int(line[22:26]),
+        'i_code': line[26],
+        'x': float(line[30:38]),
+        'y': float(line[38:46]),
+        'z': float(line[46:54]),
+        'occupancy': float(line[54:60]),
+        'temp_factor': float(line[60:66]),
+        'element': line[76:78].strip(),
+        'charge': line[78:80].strip()
+    }
+
+
 def parseAtomGroupsFile(filename):
 
     # read in the atom data
@@ -5357,6 +5380,277 @@ def rotateAtoms(atoms, group):
 
     return atoms
 
+def renumber_pdb_lines(lines):
+    """
+    Generator that yields renumbered PDB lines according to the specified rules:
+    - Atom serial numbers sequential across the entire file.
+    - Residue numbers restart at 1 for each new chain.
+    - Insertion codes are ignored (not preserved in output).
+    - label the first chain as A, and second as B etc. 
+    """
+    global_serial = 0               # Global atom serial counter
+    current_chain_letter = None     # Current chain identifier
+    current_res_out = 0             # Current residue number in output for this chain
+    prev_orig_res_id = None         # Tuple to track last seen (orig_resnum, orig_insertion) in the current chain
+    new_chain = True                # Flag set when processing TER to indicate start of chain
+
+    for line in lines:
+        # Preserve the newline at end of line (if any) to reattach later
+        newline_char = ''
+        if line.endswith('\n'):
+            newline_char = '\n'
+            line_content = line[:-1]  # strip the newline for processing
+        else:
+            line_content = line
+        
+        record_type = line_content[0:6]  # e.g., 'ATOM  ', 'HETATM', 'ANISOU', 'TER   ', etc.
+        
+        if record_type.startswith("ATOM") or record_type.startswith("HETATM"):
+            
+            # Parse chain ID and residue fields from fixed columns
+            orig_res_str = line_content[22:26] if len(line_content) >= 26 else line_content[22:]  # columns 23-26
+            orig_ins_code = line_content[26] if len(line_content) > 26 else ' '  # column 27
+            
+            # Convert residue number to integer (strip spaces). If empty, skip conversion.
+            try:
+                orig_res_num = int(orig_res_str.strip())
+            except ValueError:
+                orig_res_num = orig_res_str.strip()
+            
+            # If starting a new chain (or first chain)
+            if new_chain:
+                new_chain = False # clear the flag that brough us here
+                current_chain_letter = increment_chain_letter(current_chain_letter)
+                current_res_out = 0
+                prev_orig_res_id = None  # reset previous residue tracker for new chain
+            
+            # If this line belongs to a new residue (different resid or insertion code than previous in this chain)
+            if prev_orig_res_id is None or (orig_res_num, orig_ins_code) != prev_orig_res_id:
+                current_res_out += 1
+                prev_orig_res_id = (orig_res_num, orig_ins_code)
+            
+            # Increment global atom serial for this ATOM/HETATM record
+            global_serial += 1
+            
+            # Build the output line by modifying the relevant fields
+            line_list = list(line_content)
+            # Ensure the list has enough length for PDB columns (80 columns typical)
+            if len(line_list) < 80:
+                line_list.extend(' ' * (80 - len(line_list)))
+            # Update atom serial number (cols 7-11) with global_serial, right-justified in 5 characters
+            serial_str = str(global_serial).rjust(5)
+            line_list[6:11] = list(serial_str)
+
+        # output the current chain letter in col 22
+            line_list[21]=current_chain_letter
+ 
+            # Update residue sequence number (cols 23-26) with current_res_out, right-justified in 4 characters
+            res_str = str(current_res_out).rjust(4)
+            line_list[22:26] = list(res_str)
+            # Blank out the insertion code field (col 27)
+            line_list[26] = ' '
+            
+            # Join the characters and reattach the newline
+            yield "".join(line_list) + newline_char
+        
+        elif record_type.startswith("ANISOU"):
+            # ANISOU record: use the same serial and residue number as the last ATOM/HETATM
+            # (Do not increment global_serial or current_res_out)
+            line_list = list(line_content)
+            if len(line_list) < 80:
+                line_list.extend(' ' * (80 - len(line_list)))
+            # Reuse the current global_serial (last atom's serial) for columns 7-11
+            serial_str = str(global_serial).rjust(5)
+            line_list[6:11] = list(serial_str)
+            # Reuse current_res_out for residue number (cols 23-26)
+            res_str = str(current_res_out).rjust(4)
+            line_list[22:26] = list(res_str)
+            # Blank out insertion code (col 27)
+            line_list[26] = ' '
+            # Note: Chain ID (col 22) and atom name/residue name fields remain unchanged
+            line_list[21] = current_chain_letter
+
+            yield "".join(line_list) + newline_char
+        
+        elif record_type.startswith("TER"):
+            # TER record: indicates end of a chain. Assign next serial and use last residue number of that chain.
+            global_serial += 1
+            line_list = list(line_content)
+            if len(line_list) < 80:
+                line_list.extend(' ' * (80 - len(line_list)))
+            # Set serial number for TER (cols 7-11) to global_serial
+            serial_str = str(global_serial).rjust(5)
+            line_list[6:11] = list(serial_str)
+ 
+            # output chain letter
+            line_list[21] = current_chain_letter
+            # Use current_res_out for residue number (cols 23-26) of the last residue in the chain
+            res_str = str(current_res_out).rjust(4)
+            line_list[22:26] = list(res_str)
+            # Blank out insertion code (col 27)
+            line_list[26] = ' '
+            # (Residue name in the TER line are left as in the input, which should reflect the last residue)
+            yield "".join(line_list) + newline_char
+            # Reset chain tracking so that a new chain (next ATOM/HETATM) will start fresh
+            
+            prev_orig_res_id = None
+            current_res_out = 0
+    
+            # set the new chain flag
+            new_chain = True        
+
+        else:
+            # Copy other lines (header, REMARK, END, etc.) unchanged
+            yield line_content + newline_char
+
+def increment_chain_letter(letter):
+    # none increments to A to get things started   
+    if not letter:
+        return('A')
+    
+    """Increment a chain letter, cycling through A-Z."""
+    return chr(((ord(letter) - ord('A') + 1) % 26) + ord('A'))
+
+def relabel_chains(input_pdb, output_pdb):
+    with open(input_pdb, 'r') as pdb_in, open(output_pdb, 'w') as pdb_out:
+        for line in renumber_pdb_lines(pdb_in):
+            pdb_out.write(line)
+
+    print(f"Modified PDB file written to {output_pdb}")
+
+
+def get_atom_position(pdb_file, res_seq, atom_type):
+    with open(pdb_file, 'r') as f:
+        for line in f:
+            if line.startswith("ATOM") or line.startswith("HETATM"):
+                atom = parse_pdb_line(line)
+                if atom['res_seq'] == res_seq and atom['atom_name'] == atom_type:
+                    return np.array([atom['x'], atom['y'], atom['z']])
+    raise ValueError(f"Atom {atom_type} in residue {res_seq} not found.")
+
+def rodrigues_rotation(v, k, theta):
+    cos_theta = np.cos(theta)
+    sin_theta = np.sin(theta)
+    return cos_theta * v + sin_theta * np.cross(k, v) + (1 - cos_theta) * np.dot(k, v) * k
+
+def rotate_pdb(input_pdb, output_pdb, residue_list, axis_residue, axis_bond, angle):
+    if axis_bond=='N':
+        point1 = get_atom_position(input_pdb, axis_residue, 'N')
+        point2 = get_atom_position(input_pdb, axis_residue, 'CA')
+
+    if axis_bond=='C':
+        point1 = get_atom_position(input_pdb, axis_residue, 'CA')
+        point2 = get_atom_position(input_pdb, axis_residue, 'C')
+
+    axis = point2 - point1
+    axis /= np.linalg.norm(axis)
+    angle_rad = np.radians(angle)
+
+
+
+    with open(input_pdb, 'r') as inp, open(output_pdb, 'w') as outp:
+        for line in inp:
+            if line.startswith("ATOM") or line.startswith("HETATM"):
+                atom = parse_pdb_line(line)
+
+                # assume we aren't going to rotate
+                doRotation = False
+
+                # if the current residue is in the residue list rotate
+                if atom['res_seq'] in residue_list:
+
+                    # if this is the residue that contains the rotation axis do special things depending on which bond we are rotating around
+                    if atom['res_seq']==axis_residue:
+
+                        # if the rotation residue is the first entry in the list
+                        if axis_residue==residue_list[0]:
+                            if axis_bond=='N':
+                                # rotating around the N-CA bond - only rotate the side chain, CAH, C and O
+                                # i.e. don't rotate NH, N, or CA.
+                                doRotation = True
+                                if atom['atom_name'] in[ 'NH', 'N', 'CA']:
+                                    doRotation = False
+                                
+                            if axis_bond=='C':
+                                # rotating around the CA-C bond - only rotate the O
+                                if atom['atom_name'] in ['O']:
+                                    doRotation = True
+
+                        # if the rotation residue is the last entry in the list
+                        if axis_residue==residue_list[-1]:
+                            if axis_bond=='N':
+                                # rotating the last residue about the N-CA bond. rotation the NH and side chain.
+                                # i.e. don't rotate the C, O and N and CA 
+                                doRotation = True
+                                if atom['atom_name'] in ["O", "N", "CA", "C"]:
+                                    doRotation = False
+
+                            if axis_bond=='C':
+                                # rotating the last residue about the C-CA bond. only rotate the NH 
+                                if atom['atom_name'] in ["NH"]:
+                                    doRotation = True
+
+                    else:
+                        doRotation = True
+ 
+                    if doRotation:
+                        original_vector = np.array([atom['x'], atom['y'], atom['z']]) - point1
+                        rotated_vector = rodrigues_rotation(original_vector, axis, angle_rad) + point1
+                        atom['x'], atom['y'], atom['z'] = rotated_vector.tolist()
+                        line = f"{atom['line'][:30]}{atom['x']:8.3f}{atom['y']:8.3f}{atom['z']:8.3f}{atom['line'][54:]}"
+            outp.write(line)
+
+def expand_range_list(range_list):
+    expanded = []
+    for item in range_list.split(','):
+        try:
+            expanded.append(int(item))
+        except ValueError:
+            if "-" in str(item):
+                start, end = map(int, item.split("-"))
+                expanded.extend(range(start, end + 1))
+            else:
+                print(f"can't handle item: {item} in {range_list}")
+    return expanded
+
+def load_config(json_file):
+    with open(json_file, 'r') as f:
+        config = json.load(f)
+    return config
+
+def parse_rotation_config(config):
+
+    print(config)
+
+    residue_list = expand_range_list(config["residue_list"])
+    print(f"Res list input: {config['residue_list']}\nExpanded:{residue_list}")
+    axis_residue = config['axis_residue']
+    axis_bond = config['axis_bond']
+    try: 
+        angle = float(config["angle"])
+    except ValueError:
+        print(f"Unable to convert angle: {config['angle']} to float. Enter as decimal value in degrees from -180.0 to 180.0")
+ 
+    return residue_list, axis_residue, axis_bond, angle
+
+
+def rotate_groups_fast(start_pdb, config):
+
+    input_pdb = start_pdb
+    for rot in config:
+        print(f"Processing Rotation: {rot}")
+        output_pdb = input_pdb[0:-4] + "_" + rot + ".pdb"
+        residue_list, axis_residue, axis_bond, angle = parse_rotation_config(config[rot])
+        print(f"Input file: {input_pdb}")
+        print(f"Output file: {output_pdb}")
+        print(f"Rotating defined group {angle} degrees about bond CA-{axis_bond} in residue {axis_residue}.")
+
+        rotate_pdb(input_pdb, output_pdb, residue_list, axis_residue, axis_bond, angle)
+        print(f"Rotation Complete and written to {output_pdb}")
+
+        # set the input for the next cycle to be the output for this cycle
+        input_pdb=output_pdb
+
 
 def rotateGroup(infile,atomGroupsFilename,outfile):
     
@@ -5364,7 +5658,7 @@ def rotateGroup(infile,atomGroupsFilename,outfile):
        The new coords are then written down.  The groups are processed in the order they appear in the atomgroups file.
        The numbers in the atom groups file refer to the order the atoms appear in the pdb'''
     print(outfile)
-    # read in the atoms from a the file
+    # read in the atoms from the file as a generator
     atoms = readAllAtoms(infile)
 
     # parse the atoms group instructions for rotations
@@ -5382,7 +5676,6 @@ def rotateGroup(infile,atomGroupsFilename,outfile):
 def extractCoords(atoms):
     return [ np.array([atom[7], atom[8], atom[9]]) for atom in atoms ]
 
-   
 
 def torsionDiff(indirectory, outfile):
     # in the current directory find the lowestN.1.pdb files
@@ -5394,8 +5687,6 @@ def torsionDiff(indirectory, outfile):
     # output the energy at the top of the file
     
     # output the 
-
-
 
     return
 
