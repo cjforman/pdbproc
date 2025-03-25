@@ -136,6 +136,11 @@ command is one of:
 
     dumpCAsAsPDB dCA infile 
         dumps the input pdb containing only the CAs of a protein. renames as infile_CAOnly.pdb
+
+    dumpFragment df infile a b
+        dumps the residues of the file as a new pdb with a and b defining the residue numbers to dump (inclusive)
+        Any residues numbers in region (a,b) will be dumped, so multiple chains will be dumped as blocks
+        TERS or ENDs are kept so chains will be seperated by TER. 
          
     eliminateCIS eCIS inpfile
 	    Calls the createCT algorithm to check if the lowest energy pdb has no CIS states
@@ -625,6 +630,15 @@ command is one of:
             print("dumpParticularAtoms: Must specify inpfile and configfile:  dap inpfile config.json")
             exit(1)
 
+    elif command in ['dumpFragment','df', 'DF']:
+        if len(sys.argv)==4:
+            params[0]=sys.argv[2]
+            params[1]=sys.argv[3]
+        else:
+            print("dumpfragment infile a b")
+            exit(1)
+
+
     elif command in ['measureTubeRadius','mtr']:
         if len(sys.argv)==4:
             with open(sys.argv[3], "r") as f: 
@@ -656,9 +670,10 @@ command is one of:
             print("Must specify dummyInpFile trainSetDir, testSetDir and config.json:  gc inpFile trainSetDir testSetDir config.json")
             exit(1)
 
+
     elif command in ['relabelChains','rlc']:
-        if len(sys.argv) != 2:
-            print("Usage: pdbproc.py input.pdb")
+        if len(sys.argv) != 3:
+            print("Usage: pdbproc.py rlc input.pdb")
             exit(1)
 
     elif command in ['rotategroupfast','rgf']:
@@ -1292,6 +1307,9 @@ if __name__ == '__main__':
         elif command in ['dumpParticularAtoms','dpa']:
             pl.dumpParticularAtoms(infile, params)
 
+        elif command in ['dumpFragment','df', 'DF']:
+            pl.dumpFragment(infile, params[0], params[1], f"{infile[0:-4]}_{params[0]}_{params[1]}.pdb")
+
         elif command in ['pairwisedistance', 'pwd']:
             pl.pairwisedistance(infile, params)
 
@@ -1385,7 +1403,7 @@ if __name__ == '__main__':
             pl.measureTubeRadius(infile, params)
         
         elif command in ['relabelChain', 'rlc']:
-            relabel_chains(infile, infile[0:-4] + '_ren.pdb'):
+            relabel_chains(infile, infile[0:-4] + '_ren.pdb')
 
         elif command in ['ramachandran', 'rmc', 'rama']:
             pl.ramachandran(infile, params)

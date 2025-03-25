@@ -5753,7 +5753,28 @@ def rotateGroup(infile,atomGroupsFilename,outfile):
     replacePdbAtoms(infile, extractCoords(atoms), outfile)
 
     return    
- 
+
+def pdb_line_generator(pdb_file_path):
+    """Yields lines from a PDB file one at a time."""
+    with open(pdb_file_path, 'r') as file:
+        for line in file:
+            yield line
+            
+def dumpFragment(input_pdb_path, start_residue, end_residue, output_pdb_path):
+    """Extracts a fragment from a PDB file between start_residue and end_residue."""
+    with open(output_pdb_path, 'w') as output_file:
+        for line in pdb_line_generator(input_pdb_path):
+            if line.startswith(('ATOM', 'HETATM')):
+                try:
+                    res_seq = int(line[22:26].strip())  # Residue sequence number is in columns 23-26
+                    if start_residue <= res_seq <= end_residue:
+                        output_file.write(line)
+                except ValueError:
+                    continue  # Skip malformed lines
+            elif line.startswith('TER') or line.startswith('END'):  # Optional: keep TER/END if within fragment
+                output_file.write(line)
+    
+     
 def extractCoords(atoms):
     return [ np.array([atom[7], atom[8], atom[9]]) for atom in atoms ]
 
