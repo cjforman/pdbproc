@@ -631,9 +631,10 @@ command is one of:
             exit(1)
 
     elif command in ['dumpFragment','df', 'DF']:
-        if len(sys.argv)==4:
-            params[0]=sys.argv[2]
-            params[1]=sys.argv[3]
+        print(len(sys.argv))
+        print(sys.argv)
+        if len(sys.argv)==5:
+            params=[int(sys.argv[3]), int(sys.argv[4])]
         else:
             print("dumpfragment infile a b")
             exit(1)
