@@ -676,14 +676,16 @@ command is one of:
             print("Usage: pdbproc.py rlc input.pdb")
             exit(1)
 
-    elif command in ['rotategroupfast','rgf']:
-        if len(sys.argv)==3:
-            with open(sys.argv[2], "r") as f: 
-                params=json.load(f)
-            print("rgf params: ", params)
+    elif command in ['rotateGroupFast', 'RGF', 'rgf']:
+        print(f"Length of sys.arg: {len(sys.argv)}")
+        if len(sys.argv)<4:
+            print("Rotate group usage: pdbproc.py rotateGroupFast inpfile config.json")
+            sys.exit(0)
+        elif (len(sys.argv)==4):
+            with open(sys.argv[3]) as f:
+                params = json.load(f)
         else:
-            print("pdbproc.py rotategroupfast inpfile config.json")
-            exit(1)
+            print("usage: pdbproc.py rotateGroupFast inpfile config.json")
 
 
     elif command in ['scanSetForSequence', 'ssfs']:
@@ -1403,7 +1405,7 @@ if __name__ == '__main__':
             pl.measureTubeRadius(infile, params)
         
         elif command in ['relabelChain', 'rlc']:
-            relabel_chains(infile, infile[0:-4] + '_ren.pdb')
+            pl.relabel_chains(infile, infile[0:-4] + '_ren.pdb')
 
         elif command in ['ramachandran', 'rmc', 'rama']:
             pl.ramachandran(infile, params)
@@ -1504,10 +1506,7 @@ if __name__ == '__main__':
         elif command in ['rotateGroup', 'RG', 'rg']:
             pl.rotateGroup(infile,params[0],params[1])
 
-       elif command in ['rotateGroupFast', 'RGF', 'rgf']:
-            pl.rotate_groups_fast(infile,params[0],params[1])
-
-        elif command in ['rotateGroupsFast', 'RGF', 'rgf']:
+        elif command in ['rotateGroupFast', 'RGF', 'rgf']:
             pl.rotate_groups_fast(infile, params)
 
         elif command in ['replacePdbXyz', 'xyz2pdb']:
