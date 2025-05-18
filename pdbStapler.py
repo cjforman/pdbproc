@@ -986,7 +986,7 @@ class Fragment:
         for chain in self.chains:
             self.chainNames.append(chain.getChainName())
         self.name = filename
-        self.atoms = pdb.readAtoms(filename)
+        self.atoms = list(pdb.parse_atom_type_generator(filename))
         self.preResList = cp.copy(preResList)
         self.postResList = cp.copy(postResList)
         self.NCapList = cp.copy(NCapList)
@@ -1326,7 +1326,7 @@ def align(static, mobile):
     mindist.transform.rotate(allMobileXYZ, rot)
     mindist.transform.translate(allMobileXYZ, staticCOG)
 
-    # generate a new copy of the input mobile fragment
+    # generate a new copy of the input mobile fragment.??? why do we need a copy. We can just over write the coords...? 
     newMobile = cp.deepcopy(mobile)
 
     # update the new mobile with the new XYZ coords.

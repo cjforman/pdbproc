@@ -1004,6 +1004,55 @@ def dumpParticularAtoms(infile, params):
     writeAtomsToTextFile(newAtoms, filename)
 
 
+def parse_atom_type_generator(file_path):
+    """
+    Generator to parse PDB file line by line and yield coordinates and atom names.
+    """
+    with open(file_path, 'r') as file:
+        for line in file:
+            if line.startswith(('ATOM', 'HETATM')):               
+                atom_seri = int(line[6:11].strip())
+                atom_name = line[12:16].strip()
+                alte_loca = line[16]
+                resi_name = line[17:20].strip()
+                chai_iden = line[21]
+                resi_numb = int(line[22:26].strip())
+                code_inse = line[26]
+                x = float(line[30:38].strip())
+                y = float(line[38:46].strip())
+                z = float(line[46:54].strip())
+
+                try:
+                    atom_occu = float(line[54:60].strip())
+                except:
+                    atom_occu=0.0
+            
+                try:
+                    atom_bfac = float(line[60:66].strip())
+                except:
+                    atom_bfac=0.0    
+                
+                try:
+                    seg_id = line[72:76].strip()
+                except:
+                    seg_id=' '
+            
+                try:
+                    atom_symb = l[76:78].strip()
+                except:
+                    try:
+                        atom_symb = l[68]
+                    except:
+                        atom_symb= ' '
+                                    
+                try:
+                    charge=line[78:80].strip()
+                except:
+                    charge=' '
+
+                yield [atom_seri, atom_name, alte_loca, resi_name, chai_iden, resi_numb, code_inse, x, y, z, atom_occu, atom_bfac, seg_id, atom_symb, charge]
+                                
+
 def parse_pdb_coords_type_generator(file_path):
     """
     Generator to parse PDB file line by line and yield coordinates and atom names.
