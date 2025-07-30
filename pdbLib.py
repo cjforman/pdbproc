@@ -190,10 +190,17 @@ atomnamesToElement = {
     'C':'C',
     'O':'O',
     'N':'N',
+    'H':"H",
+    'S':"S",
     'H1':"H",
     'H2':"H",
     'H3':"H",
     'CA':"C",
+    'CB':"C",
+    'CD':"C",
+    'CE':"C",
+    'CF':"C",
+    'CG':"C",
     'HA1':"H",
     'HA2':"H",
     'HA3':"H",
@@ -1006,7 +1013,7 @@ def dumpParticularAtoms(infile, params):
 
 def parse_atom_type_generator(file_path):
     """
-    Generator to parse PDB file line by line and yield coordinates and atom names.
+    Generator to parse PDB file line by line and yield full atoms array
     """
     with open(file_path, 'r') as file:
         for line in file:
@@ -1064,6 +1071,13 @@ def parse_pdb_coords_type_generator(file_path):
                 y = float(line[38:46].strip())
                 z = float(line[46:54].strip())
                 atom = line[76:78].strip()  # Atom name is typically here
+                if not atom:
+                    atom_name = line[12:16].strip()
+                    if atom_name and atom_name[0].isalpha():
+                        atom = atom_name[0].upper()
+                    elif len(atom_name) > 1:
+                        atom = atom_name[1].upper()
+                    
                 yield x, y, z, atom
 
 def parse_xyz_coords_type_generator(file_path):
@@ -1096,7 +1110,7 @@ def gyrationAnalysis(infile, auxiliaryFile=None):
     }
 
     print("loading file as list")
-    
+        
     # Example: Load data using directory directly into a data list 
     if auxiliaryFile:
         data = list(parse_pdb_coords_type_generator(infile)) + list(parse_xyz_coords_type_generator(auxiliaryFile))
@@ -3084,8 +3098,8 @@ def solventExposure(commandLineInpfile, params):
             #pymolLoadSave(params['infile'], params['infile'])
             try:
                 GBSurfaceAnalyse(params)
-            except UnboundLocalError:
-                print("Error with file:", inpfile, ". Moving on.") 
+            except UnboundLocalError as e:
+                print(f"Error {e} with file{inpfile}. Moving on.") 
                 pass
     else:
         print(commandLineInpfile)
@@ -3096,8 +3110,8 @@ def solventExposure(commandLineInpfile, params):
         #pymolLoadSave(params['infile'], params['infile'])
         try:
             GBSurfaceAnalyse(params)
-        except UnboundLocalError:
-            print("Error with file:", inpfile, ". Moving on.") 
+        except UnboundLocalError as e :
+            print(f"Error {e} with file{inpfile}. Moving on.") 
             pass
 
 # this does weird stuff to the pdbs. cut it out 
